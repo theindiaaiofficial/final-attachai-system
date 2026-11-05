@@ -1,0 +1,18 @@
+ORBIT AI — LIVE VOICE MODE UPDATE
+
+This update adds the continuous voice conversation experience to the existing widget.
+
+Files changed:
+- app/widget/static/widget.js
+- app/widget/static/widget.css
+- app/providers/speech.py (AssemblyAI STT compatibility fallback)
+- docs/LIVE_VOICE_MODE.md
+
+Apply:
+1. Back up the current project folder.
+2. Extract this ZIP over the project folder, allowing the listed files to be replaced.
+3. Keep your existing .env file unchanged. This update does not include or require a replacement .env.
+4. Restart the FastAPI service and refresh the website with a hard reload (Ctrl+Shift+R).
+5. Test microphone permission, a Hindi turn, an English turn, assistant playback, mute/unmute, interrupt, minimize, and end-session controls.
+
+No new environment variables are required. The widget reuses the existing STT, chat, and TTS endpoints. The detected STT language is passed to TTS when available.

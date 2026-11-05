@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sign in · Orbit AI</title>
+  <link rel="icon" href="/static/orbit.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/admin.css">
+  <link rel="stylesheet" href="/static/responsive.css">
+  <script type="module" src="/static/login.js"></script>
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <img src="/static/orbit.svg" alt="Orbit AI" width="48" height="48">
+    <span class="eyebrow">ORBIT AI ADMINISTRATION</span>
+    <h1>Welcome back.</h1><p>Sign in to your platform control center.</p>
+    <form id="login-form">
+      <label class="field"><span>Admin API key</span><input name="api_key" type="password" required maxlength="1000" autocomplete="off" placeholder="Enter your admin API key" autofocus></label>
+      <p id="login-error" class="form-error" role="alert" hidden></p>
+      <button type="submit" class="button primary wide">Sign in to Orbit <span aria-hidden="true">→</span></button>
+    </form>
+    <p class="login-security">Your credential is exchanged for an expiring, HttpOnly session. It is never saved in browser storage.</p>
+    <div class="login-footer"><span class="live-dot"></span>Private workspace · Authorized administrators only</div>
+  </main>
+</body>
+</html>

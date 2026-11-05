@@ -1,0 +1,78 @@
+{
+  "executed_at": "2026-11-03T15:52:15.352189+00:00",
+  "mode": "Real local FastAPI + SQLite + Chromium; external LLM/embedding adapters faked only",
+  "checks": [
+    {
+      "check": "Login rejection, session creation, protected shell",
+      "result": "PASS"
+    },
+    {
+      "check": "Create client with one-time API key and persisted list",
+      "result": "PASS"
+    },
+    {
+      "check": "Edit client, prompt version history, disable/enable key confirmations",
+      "result": "PASS"
+    },
+    {
+      "check": "Multi-format upload UI, persisted metadata, real rebuild completion",
+      "result": "PASS"
+    },
+    {
+      "check": "Conversation history rendering and adversarial model-text escaping",
+      "result": "PASS"
+    },
+    {
+      "check": "Lead workflow, contact details, persisted notes, authenticated CSV download",
+      "result": "PASS"
+    },
+    {
+      "check": "Actual analytics chart, period filter, usage table",
+      "result": "PASS"
+    },
+    {
+      "check": "Provider role display and completion test with isolated model adapter",
+      "result": "PASS"
+    },
+    {
+      "check": "System settings page and API integration",
+      "result": "PASS"
+    },
+    {
+      "check": "Activity log page and API integration",
+      "result": "PASS"
+    },
+    {
+      "check": "Documentation page and API integration",
+      "result": "PASS"
+    },
+    {
+      "check": "Theme toggle and collapsible desktop navigation",
+      "result": "PASS"
+    },
+    {
+      "check": "390px responsive layout, mobile drawer, tenant table",
+      "result": "PASS"
+    },
+    {
+      "check": "Existing widget/public key/chat integration and safe DOM output",
+      "result": "PASS"
+    },
+    {
+      "check": "Logout invalidates server session; browser storage has theme only",
+      "result": "PASS"
+    }
+  ],
+  "screenshots": [
+    "docs\\screenshots\\analytics-desktop.png",
+    "docs\\screenshots\\clients-mobile.png",
+    "docs\\screenshots\\conversations-desktop.png",
+    "docs\\screenshots\\knowledge-desktop.png",
+    "docs\\screenshots\\leads-desktop.png",
+    "docs\\screenshots\\login.png",
+    "docs\\screenshots\\overview-dark.png",
+    "docs\\screenshots\\overview-desktop.png",
+    "docs\\screenshots\\overview-empty.png",
+    "docs\\screenshots\\providers-desktop.png"
+  ]
+}

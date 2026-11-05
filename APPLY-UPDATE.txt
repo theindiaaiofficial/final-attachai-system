@@ -1,0 +1,34 @@
+ORBIT AI — CITATIONS, ROUTING, AND CONVERSATION-HISTORY PATCH
+
+Target project folder:
+D:\attachai-3\working-system
+
+Copy/overwrite only these files from this patch:
+- app/widget/static/widget.js
+- app/widget/static/widget.css
+- app/rag/router.py
+- app/rag/generation.py
+- app/config.py
+- .env.example
+- tests/test_rag_accuracy.py
+
+Do not replace the whole project with this archive. It is an overlay patch.
+It does not contain .env, credentials, databases, or user data.
+
+IMPORTANT HISTORY SETTING:
+The code default and .env.example now use MAX_HISTORY_MESSAGES=40 (up to 20 user/assistant exchanges).
+If your existing local .env already defines MAX_HISTORY_MESSAGES, change only that setting to:
+MAX_HISTORY_MESSAGES=40
+Do not share your .env file or its contents.
+
+After copying the files, restart Uvicorn and run:
+  python -m compileall -q app tests scripts
+  pytest -q
+
+What changed:
+- Assistant citations returned by /v1/chat are now persisted in widget chat history and shown in an expandable Sources section with title/filename, page, and excerpt.
+- Empty "Sources:" headings are removed from the visible answer text.
+- Additional AttachAI-specific phrases route directly to business knowledge retrieval.
+- Conversation-summary instructions now use the supplied chat history and distinguish discussed statements from independently verified facts.
+- Default history is increased from 8 to 40 messages.
+- Regression tests cover the new routing and history defaults.

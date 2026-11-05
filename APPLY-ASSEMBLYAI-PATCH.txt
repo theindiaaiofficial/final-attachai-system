@@ -1,0 +1,38 @@
+ORBIT AI - ASSEMBLYAI STT/TTS PATCH
+
+1) Extract this ZIP into the root of:
+   D:\attachai-3\working-system
+   Allow overwrite for the included source files only.
+
+2) Install the updated Python requirements from that project folder:
+   python -m pip install -r requirements.txt
+
+3) Add these lines to your EXISTING .env file. Do not replace the whole .env:
+
+   TTS_PROVIDER=assemblyai
+   STT_PROVIDER=assemblyai
+   ASSEMBLYAI_API_KEY=PASTE_YOUR_ASSEMBLYAI_API_KEY_HERE
+   ASSEMBLYAI_TTS_VOICE_ID=49c443a4-8a1d-5f7e-b70b-98bdbd9823c3
+   ASSEMBLYAI_TTS_LANGUAGE=english
+   ASSEMBLYAI_TTS_CONTAINER=wav
+
+   The same AssemblyAI key is used by both STT and TTS. Do not add the key to
+   widget.js or any browser-side file. Do not share your .env file.
+
+4) Restart the FastAPI/Uvicorn server.
+
+5) Open the website over HTTPS (or localhost while developing), allow
+   microphone access, then test:
+   - STT: click the waveform/microphone button, speak, then stop/send.
+   - TTS: click the speaker button on an assistant reply.
+
+The existing widget routes (/v1/stt and /v1/tts) are retained. AssemblyAI SDK
+calls run in a worker thread. Audio uploads remain limited to 12 MB per request.
+
+Validation performed in the patch environment:
+- Speech provider tests: 5 passed.
+- Broader suite excluding tests/test_llm_provider.py: 45 passed.
+- Python compileall: passed.
+- Full suite could not collect because litellm is not installed in this patch
+  environment; this is an environment dependency issue, not a passing result.
+- Ruff was not installed in this patch environment, so lint was not verified.

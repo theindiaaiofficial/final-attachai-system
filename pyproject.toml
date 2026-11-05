@@ -1,0 +1,18 @@
+[project]
+name = "orbit-ai-python"
+version = "1.0.0"
+description = "Python/FastAPI Orbit AI platform using the RAG-2.0 conversational pipeline"
+requires-python = ">=3.12,<3.13"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "E701", "E702", "UP017", "B008", "B905"]

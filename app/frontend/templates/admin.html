@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Orbit AI · Administration</title>
+  <link rel="icon" href="/static/orbit.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/admin.css">
+  <link rel="stylesheet" href="/static/responsive.css">
+  <script type="module" src="/static/admin.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+    <a class="brand" href="#overview"><img src="/static/orbit.svg" alt="" width="32" height="32"><span>Orbit<span class="brand-ai"> AI</span></span><span class="workspace-label">ADMIN</span></a>
+    <div class="workspace"><span class="workspace-avatar">O</span><div><strong>Orbit workspace</strong><small>Platform administration</small></div><span class="workspace-dot"></span></div>
+    <div class="nav-caption">WORKSPACE</div>
+    <nav id="navigation"></nav>
+    <div class="sidebar-bottom"><div class="sidebar-note"><span class="live-dot"></span><span>RAG-2.0 architecture</span></div><button class="nav-link" id="collapse-nav" type="button" aria-label="Collapse navigation"><span id="collapse-icon"></span><span class="nav-label">Collapse sidebar</span></button></div>
+  </aside>
+  <div id="mobile-shade" class="mobile-shade" hidden></div>
+  <div class="app-main">
+    <header class="topbar">
+      <button class="icon-button mobile-menu" id="mobile-menu" aria-label="Open navigation" type="button"></button>
+      <div class="breadcrumb"><span>Workspace</span><span class="slash">/</span><strong id="breadcrumb-page">Overview</strong></div>
+      <div class="topbar-right">
+        <form class="global-search" id="global-search"><span id="search-icon"></span><input name="q" aria-label="Search clients" placeholder="Search clients…" maxlength="120"><kbd>↵</kbd></form>
+        <button class="icon-button" id="theme-toggle" aria-label="Switch color theme" type="button"></button>
+        <span class="topbar-divider"></span><span class="admin-avatar" aria-label="Administrator">A</span>
+        <div class="account-label"><strong>Administrator</strong><small id="session-label">Secure session</small></div>
+        <button class="button subtle small" id="logout" type="button">Log out</button>
+      </div>
+    </header>
+    <main id="content" tabindex="-1" aria-live="polite"></main>
+    <footer class="app-footer"><span>Orbit AI · Platform control center</span><span>Tenant-isolated by design</span></footer>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>
