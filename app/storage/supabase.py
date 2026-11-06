@@ -9,7 +9,8 @@ class SupabaseStorage:
     name = "supabase"
 
     def __init__(self, url: str, service_role_key: str, bucket: str):
-        self.base_url = url.rstrip("/") + "/storage/v1/object"
+        self.storage_url = url.rstrip("/") + "/storage/v1"
+        self.base_url = self.storage_url + "/object"
         self.bucket = bucket
         self.headers = {"apikey": service_role_key, "Authorization": f"Bearer {service_role_key}"}
 
@@ -36,4 +37,8 @@ class SupabaseStorage:
         return response.content
 
     def health(self) -> dict[str, str]:
-        return {"provider": self.name, "status": "configured"}
+        # Verify the private bucket exists and the service-role credential can access it.
+        with httpx.Client(timeout=12) as client:
+            response = client.get(f"{self.storage_url}/bucket/{quote(self.bucket, safe='')}", headers=self.headers)
+        response.raise_for_status()
+        return {"provider": self.name, "status": "ok", "bucket": self.bucket}

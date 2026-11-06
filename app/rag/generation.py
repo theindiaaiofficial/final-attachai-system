@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from app.config import Settings
-from app.providers.llm import CompletionProvider
+from app.providers.llm import CompletionProvider, LLMError
 
 
 class AnswerGenerator:
@@ -17,6 +19,7 @@ class AnswerGenerator:
         history: list[dict[str, str]],
         tenant_prompt: str,
         identity: str = "",
+        on_token: Callable[[str], None] | None = None,
     ) -> str:
         system = (
             f"{identity}\n{tenant_prompt}\n"
@@ -28,17 +31,37 @@ class AnswerGenerator:
             "as the source and accurately describe what was said. Distinguish previously discussed claims from "
             "independently verified facts, and never claim access to messages that are not present in the supplied history."
         )
-        return await self.llm.complete(
-            "answer",
-            [
-                {"role": "system", "content": system},
-                *self._history(history),
-                {"role": "user", "content": message},
-            ],
-            temperature=0.45,
-            max_tokens=800,
+        messages = [
+            {"role": "system", "content": system},
+            *self._history(history),
+            {"role": "user", "content": message},
+        ]
+        if on_token and callable(getattr(self.llm, "complete_stream", None)):
+            emitted = False
+
+            def relay(token: str) -> None:
+                nonlocal emitted
+                if token:
+                    emitted = True
+                    on_token(token)
+
+            try:
+                return await self.llm.complete_stream(
+                    "answer", messages, on_token=relay, temperature=0.45,
+                    max_tokens=800, operation="general_generation",
+                )
+            except LLMError:
+                # Compatibility fallback only before any bytes were exposed. Once
+                # text has streamed, a retry could duplicate a partial answer.
+                if emitted:
+                    raise
+        answer = await self.llm.complete(
+            "answer", messages, temperature=0.45, max_tokens=800,
             operation="general_generation",
         )
+        if on_token and answer:
+            on_token(answer)
+        return answer
 
     async def with_evidence(
         self,

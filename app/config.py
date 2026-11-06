@@ -33,11 +33,11 @@ class Settings(BaseSettings):
     orbit_trace_log_path: Path = Field(Path("data/logs/orbit-trace.jsonl"), alias="ORBIT_TRACE_LOG_PATH")
     orbit_trace_max_bytes: int = Field(5_000_000, ge=100_000, le=50_000_000, alias="ORBIT_TRACE_MAX_BYTES")
 
-    database_provider: str = Field("sqlite", alias="DATABASE_PROVIDER")
+    database_provider: str = Field("auto", alias="DATABASE_PROVIDER")
     sqlite_path: Path = Field(ROOT / "data" / "orbit.db", alias="SQLITE_PATH")
-    storage_provider: str = Field("local", alias="STORAGE_PROVIDER")
+    storage_provider: str = Field("auto", alias="STORAGE_PROVIDER")
     local_storage_path: Path = Field(ROOT / "data" / "storage", alias="LOCAL_STORAGE_PATH")
-    vector_provider: str = Field("sqlite", alias="VECTOR_PROVIDER")
+    vector_provider: str = Field("auto", alias="VECTOR_PROVIDER")
     supabase_url: str | None = Field(None, alias="SUPABASE_URL")
     supabase_service_role_key: SecretStr | None = Field(None, alias="SUPABASE_SERVICE_ROLE_KEY", repr=False)
     supabase_storage_bucket: str = Field("knowledge", alias="SUPABASE_STORAGE_BUCKET")
@@ -160,6 +160,52 @@ class Settings(BaseSettings):
                 raise ValueError(f"{role.upper()}_LITELLM_PARAMS contains reserved parameters: {sorted(invalid)}")
         return self
 
+    def resolve_data_providers(self) -> tuple[str, str, str]:
+        """Resolve storage backends without silently ignoring Supabase credentials.
+
+        With all provider settings left at ``auto``, complete Supabase credentials
+        select Supabase for database, object storage, and vectors. Without
+        credentials, Orbit keeps its local SQLite/filesystem defaults. Explicit
+        legacy local settings remain supported.
+        """
+        requested = tuple(
+            str(value or "auto").strip().casefold()
+            for value in (self.database_provider, self.storage_provider, self.vector_provider)
+        )
+        allowed = {"auto", "supabase", "sqlite", "local"}
+        if any(value not in allowed for value in requested):
+            raise ValueError("Database/storage/vector provider must be auto, supabase, or the supported local provider")
+
+        has_url = bool((self.supabase_url or "").strip())
+        service_key = self.supabase_service_role_key.get_secret_value().strip() if self.supabase_service_role_key else ""
+        has_key = bool(service_key and not service_key.startswith("YOUR_"))
+        if has_url != has_key:
+            raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must both be configured")
+
+        if has_url:
+            from urllib.parse import urlparse
+            parsed = urlparse(self.supabase_url or "")
+            if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+                raise ValueError("SUPABASE_URL must be a valid http(s) project URL")
+
+        if requested == ("sqlite", "local", "sqlite"):
+            return ("sqlite", "local", "sqlite")
+
+        explicit = {value for value in requested if value != "auto"}
+        if len(explicit) > 1:
+            # Orbit currently supports a unified data backend, not mixed local/cloud stores.
+            raise ValueError("Use one unified data backend: Supabase or local SQLite/filesystem")
+
+        selected = next(iter(explicit), "supabase" if has_url else "local")
+        if selected == "supabase":
+            if not has_url or not has_key:
+                raise ValueError("Supabase is selected but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing")
+            return ("supabase", "supabase", "supabase")
+        if selected in {"sqlite", "local"}:
+            # Normalize the historical trio and its automatic no-credentials default.
+            return ("sqlite", "local", "sqlite")
+        raise ValueError("Unsupported data backend configuration")
+
     @property
     def tts_enabled(self) -> bool:
         provider = self.tts_provider.strip().casefold()
@@ -217,8 +263,10 @@ class Settings(BaseSettings):
             issues.append("EMBEDDING_API_BASE is required for non-Gemini embeddings")
         if self.app_env == "production" and any((self.orbit_temp_debug_gousto, self.orbit_temp_debug_llm_input, self.orbit_temp_debug_puregym, bool(self.orbit_temp_debug_client_id.strip()))):
             issues.append("Temporary debug switches must be disabled in production")
-        if self.database_provider == "supabase" and (not self.supabase_url or not self.supabase_service_role_key or self.supabase_service_role_key.get_secret_value().startswith("YOUR_")):
-            issues.append("Supabase database credentials are not configured")
+        try:
+            self.resolve_data_providers()
+        except ValueError as exc:
+            issues.append(str(exc))
         return issues
 
 

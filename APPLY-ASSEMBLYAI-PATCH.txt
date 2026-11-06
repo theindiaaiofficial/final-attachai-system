@@ -21,10 +21,11 @@ ORBIT AI - ASSEMBLYAI STT/TTS PATCH
 
 4) Restart the FastAPI/Uvicorn server.
 
-5) Open the website over HTTPS (or localhost while developing), allow
-   microphone access, then test:
-   - STT: click the waveform/microphone button, speak, then stop/send.
-   - TTS: click the speaker button on an assistant reply.
+5) Open the website over HTTPS (or localhost while developing), then test:
+   - TTS: click the speaker button next to Copy on an assistant reply. The
+     player shows a loading state, then waveform, elapsed/total time, and progress.
+   - STT: external integrations may submit an audio file to /v1/stt. The visitor
+     widget no longer starts microphone capture or live voice conversations.
 
 The existing widget routes (/v1/stt and /v1/tts) are retained. AssemblyAI SDK
 calls run in a worker thread. Audio uploads remain limited to 12 MB per request.

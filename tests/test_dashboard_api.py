@@ -222,8 +222,23 @@ def test_public_chat_and_stream_still_use_pipeline_and_widget(web, auth):
     session = response.json()["session_id"]
     assert len(state.repository.history(item["id"], session, 12)) == 2
     stream = web.post("/v1/chat/stream", headers=headers, json={"message": "hello", "session_id": session})
-    assert "event: done" in stream.text and "event: token" not in stream.text
-    assert web.get("/widget.js").status_code == 200
+    assert "event: done" in stream.text and "event: token" in stream.text
+    assert "event: progress" in stream.text
+    widget_source = web.get("/widget.js").text
+    assert "event: token" in stream.text
+    assert '<span>Chat</span>' in widget_source
+    assert '<span>Ai</span>' not in widget_source
+    assert 'voiceSpeechChain' not in widget_source
+    assert 'getUserMedia' not in widget_source
+    assert 'MediaRecorder' not in widget_source
+    assert 'SpeechRecognition' not in widget_source
+    assert '/v1/stt' not in widget_source
+    assert 'orbit-voice-panel' not in widget_source
+    assert 'Preparing audio…' in widget_source
+    assert 'Finished speaking' in widget_source
+    assert 'currentTime' in widget_source
+    assert 'fetch(`${base}/v1/tts`' in widget_source
+    assert 'Chat with us' not in widget_source
 
 
 def test_widget_config_speech_flags_and_public_chat_delete(web, auth):
@@ -231,7 +246,7 @@ def test_widget_config_speech_flags_and_public_chat_delete(web, auth):
     headers = {"X-API-Key": item["api_key"], "Origin": "https://example.com"}
 
     config = web.get("/v1/config", headers=headers).json()
-    assert config["speech"] == {"ttsEnabled": False, "sttEnabled": False}
+    assert config["speech"] == {"ttsEnabled": False}
 
     repository = main.app.state.state.repository
     session_id = repository.create_conversation(item["id"])
@@ -250,7 +265,9 @@ def test_public_speech_routes_fail_safely_when_not_configured(web, auth):
 
     tts = web.post("/v1/tts", headers=headers, json={"text": "Hello"})
     assert tts.status_code == 503
-    assert "api_key" not in tts.text.casefold()
+    streamed_tts = web.post("/v1/tts/stream", headers=headers, json={"text": "Hello"})
+    assert streamed_tts.status_code == 503
+    assert "api_key" not in tts.text.casefold() + streamed_tts.text.casefold()
 
     stt = web.post(
         "/v1/stt",
@@ -259,3 +276,25 @@ def test_public_speech_routes_fail_safely_when_not_configured(web, auth):
     )
     assert stt.status_code == 503
     assert "api_key" not in stt.text.casefold()
+
+
+def test_readiness_rechecks_remote_data_services_each_request(web, monkeypatch):
+    current = main.app.state.state
+    monkeypatch.setattr(type(current.settings), "readiness_issues", lambda self: [])
+    monkeypatch.setattr(current.repository, "health", lambda: {"provider": "supabase", "status": "ok", "migrations": "0001-0004"})
+    monkeypatch.setattr(current.storage, "health", lambda: {"provider": "supabase", "status": "ok", "bucket": "knowledge"})
+
+    ready = web.get("/ready")
+    assert ready.status_code == 200
+    assert ready.json()["status"] == "ready"
+    assert ready.json()["backend_health"]["database"]["migrations"] == "0001-0004"
+
+    def unavailable():
+        raise RuntimeError("do not expose connection details")
+
+    monkeypatch.setattr(current.repository, "health", unavailable)
+    not_ready = web.get("/ready")
+    assert not_ready.status_code == 503
+    assert not_ready.json()["backend_health"]["database"] == {
+        "provider": "sqlite", "status": "unavailable", "error": "RuntimeError"
+    }

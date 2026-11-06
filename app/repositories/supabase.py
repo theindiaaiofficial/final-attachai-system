@@ -259,8 +259,22 @@ class SupabaseRepository:
         self._request("DELETE", "admin_settings", params={"key": f"eq.{key}"})
 
     def health(self) -> dict[str, str]:
-        self._request("GET", "clients", params={"select": "id", "limit": "1"})
-        return {"provider": self.name, "status": "ok"}
+        # Probe the base schema plus the vector and admin migrations. A clients-only
+        # probe can incorrectly report healthy when required later migrations are absent.
+        probes = (
+            ("clients", "id"),
+            ("knowledge_vectors_v2", "id"),
+            ("admin_sessions", "token_hash"),
+            ("admin_settings", "key"),
+            ("notifications", "id"),
+            ("orbit_schema_migrations", "version"),
+        )
+        for table, field in probes:
+            self._request("GET", table, params={"select": field, "limit": "0"})
+        marker = self._request("GET", "orbit_schema_migrations", params={"select": "version", "version": "eq.4", "limit": "1"})
+        if not marker:
+            raise RuntimeError("Supabase migration 0004 is not applied")
+        return {"provider": self.name, "status": "ok", "migrations": "0001-0004"}
 
     def export_leads_csv(self, client_id: str) -> str:
         fields = ["id", "name", "email", "phone", "requirement", "message", "status", "assignee", "notes", "created_at"]

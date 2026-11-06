@@ -125,3 +125,30 @@ async def test_groq_429_uses_retry_after(
     assert result == "Success"
     assert len(calls) == 2
     assert delays == [1.5]
+
+
+@pytest.mark.asyncio
+async def test_complete_stream_emits_incremental_text(settings, monkeypatch):
+    provider = LiteLLMProvider(settings)
+    payloads = []
+
+    async def fake_acompletion(**kwargs):
+        payloads.append(kwargs)
+
+        async def chunks():
+            yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="Hello "))])
+            yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="world"))])
+
+        return chunks()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    emitted = []
+    result = await provider.complete_stream(
+        "answer",
+        [{"role": "user", "content": "Test"}],
+        on_token=emitted.append,
+    )
+
+    assert result == "Hello world"
+    assert emitted == ["Hello ", "world"]
+    assert payloads[0]["stream"] is True

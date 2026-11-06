@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Callable
 from typing import Any
 
 from app.config import Settings
@@ -137,7 +138,13 @@ class ChatPipeline:
             return {}
 
     async def handle(
-        self, tenant_id: str, message: str, session_id: str | None, request_id: str
+        self,
+        tenant_id: str,
+        message: str,
+        session_id: str | None,
+        request_id: str,
+        on_progress: Callable[[str], None] | None = None,
+        on_token: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         trace = TraceRecorder(self.settings, request_id, tenant_id, session_id)
         trace.emit(
@@ -152,7 +159,7 @@ class ChatPipeline:
         )
         try:
             result = await self._handle(
-                tenant_id, message, session_id, request_id, trace
+                tenant_id, message, session_id, request_id, trace, on_progress, on_token
             )
             trace.session_id = result["session_id"]
             trace.emit(
@@ -184,8 +191,12 @@ class ChatPipeline:
         session_id: str | None,
         request_id: str,
         trace: TraceRecorder,
+        on_progress: Callable[[str], None] | None = None,
+        on_token: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         started = time.perf_counter()
+        if on_progress:
+            on_progress("preparing")
         if not message.strip():
             raise ValueError("Message cannot be empty")
         client = self.repository.get_client(tenant_id)
@@ -241,6 +252,8 @@ class ChatPipeline:
             content=message.strip(),
         )
 
+        if on_progress:
+            on_progress("understanding")
         decision = await self.router.route(
             message.strip(),
             history,
@@ -296,6 +309,8 @@ class ChatPipeline:
                     },
                 )
             else:
+                if on_progress:
+                    on_progress("generating")
                 trace.emit(
                     "answer",
                     "generation_started",
@@ -305,15 +320,18 @@ class ChatPipeline:
                         "evidence_count": 0,
                     },
                 )
-                answer = await self.generator.general(
-                    effective_message, history, client["prompt"], identity_context
-                )
+                generator_args = (effective_message, history, client["prompt"], identity_context)
+                if on_token:
+                    generator_args = (*generator_args, on_token)
+                answer = await self.generator.general(*generator_args)
                 trace.emit(
                     "answer",
                     "generation_completed",
                     metadata={"answer_length": len(answer)},
                 )
         else:
+            if on_progress:
+                on_progress("retrieving")
             retrieval_query = (
                 decision.retrieval_query or decision.resolved_query or message.strip()
             )
@@ -356,19 +374,26 @@ class ChatPipeline:
                 )
             elif not retrieval.chunks:
                 evidence_status = EvidenceStatus.INSUFFICIENT.value
-                answer = await self.generator.general(
+                if on_progress:
+                    on_progress("generating")
+                generator_args = (
                     message
                     + "\nExplain only the general part and say the business-specific part cannot be confirmed.",
                     history,
                     client["prompt"],
                     identity_context,
                 )
+                if on_token:
+                    generator_args = (*generator_args, on_token)
+                answer = await self.generator.general(*generator_args)
                 trace.emit(
                     "evidence",
                     "evidence_insufficient_general_part",
                     metadata={"chunk_count": 0},
                 )
             else:
+                if on_progress:
+                    on_progress("checking_evidence")
                 trace.emit(
                     "evidence",
                     "evaluation_started",
@@ -407,6 +432,8 @@ class ChatPipeline:
                         metadata={"chunk_count": len(retrieval.chunks)},
                     )
 
+                if on_progress:
+                    on_progress("generating")
                 trace.emit(
                     "answer",
                     "generation_started",
@@ -435,6 +462,8 @@ class ChatPipeline:
 
                 valid_ids = {chunk["source_id"] for chunk in retrieval.chunks}
 
+                if on_progress:
+                    on_progress("verifying")
                 trace.emit(
                     "grounding",
                     "verification_started",
@@ -517,6 +546,8 @@ class ChatPipeline:
                     )
 
                     if needs_correction:
+                        if on_progress:
+                            on_progress("correcting")
                         trace.emit(
                             "correction",
                             "correction_started",
@@ -633,6 +664,8 @@ class ChatPipeline:
                                 },
                             )
 
+        if on_progress:
+            on_progress("saving")
         self.repository.save_message(
             tenant_id,
             session_id,

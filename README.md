@@ -7,7 +7,7 @@ Orbit AI is a Python 3.12 / FastAPI application. Its only public chat orchestrat
 * `app/` — FastAPI composition root, secure admin session/auth, dashboard APIs, services, provider adapters, repositories, knowledge ingestion, frontend, widget, and RAG pipeline.
 * `migrations/` — ordered Supabase schema, additive legacy-128-to-768 vector migration, and dashboard session/settings tables.
 * `tests/` — offline security, tenant isolation, dashboard API, routing, retrieval-boundary, correction, and citation tests.
-* `docs/` — discovery, architecture, security/privacy, provider, migration, Render, traceability, RAG reference comparison, debugging guide, verification documentation, screenshots, and browser results.
+* `docs/` — discovery, architecture, security/privacy, provider, migration, Render, traceability, RAG reference comparison, debugging guide, widget TTS player guide, verification documentation, screenshots, and browser results.
 * `render.yaml` — Python-only Render service definition.
 
 ## Requirements
@@ -26,13 +26,17 @@ Copy-Item .env.example .env
 uvicorn app.main:app --host 0.0.0.0 --port 10000
 ```
 
-Open `http://localhost:10000/admin`. Liveness is `http://localhost:10000/health`; readiness is `http://localhost:10000/ready`; OpenAPI is `/docs`. The local adapter uses SQLite and `data/`, which is ignored by Git. With real `DATABASE_PROVIDER=supabase`, `STORAGE_PROVIDER=supabase`, `VECTOR_PROVIDER=supabase`, and non-placeholder Supabase credentials, the composition root selects the Supabase repository and private storage adapters.
+Open `http://localhost:10000/admin`. Liveness is `http://localhost:10000/health`; readiness is `http://localhost:10000/ready`; OpenAPI is `/docs`. The local adapter uses SQLite and `data/`, which is ignored by Git. By default the data providers use `auto`: when both `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are configured, Orbit selects Supabase for database, private object storage, and vector search. Without both credentials, it uses local SQLite/filesystem storage. Set an explicit local provider trio to opt out of Supabase.
 
 ## Environment configuration
 
 `.env.example` is the complete non-secret variable contract. Copy it to `.env` for local work and replace blank values only on your machine. Never commit `.env`, `orbit-python-final.env`, provider keys, or the Supabase service-role key. Render secrets belong in Render Environment Variables.
 
 Router and answer LLM roles are configured independently through `ROUTER_*` and `ANSWER_*`. LLM provider/model changes do not require re-embedding. Embedding provider, model, preprocessing, or dimension changes require a complete tenant-scoped reindex and a matching vector migration. See `docs/PROVIDER_CONFIGURATION.md`.
+
+## Widget text-to-speech
+
+The visitor widget has no live microphone or continuous voice-conversation mode. When TTS is configured, each assistant reply has a speaker action beside Copy. Clicking it shows a loading state until provider audio is ready, then a waveform, elapsed/total time, progress, pause/resume, and stop controls. The player calls the provider-neutral `/v1/tts` API, so Deepgram, AssemblyAI, OpenAI-compatible services, and registered custom TTS adapters share the same interface. See `docs/WIDGET_TTS_PLAYER.md` and `docs/SPEECH_CONFIGURATION.md`. The standalone `/v1/stt` endpoint remains for external integrations.
 
 ## Supabase migrations
 
@@ -41,8 +45,12 @@ Apply in order:
 1. `migrations/0001_orbit_base.sql`
 2. `migrations/0002_vector_768.sql`
 3. `migrations/0003_admin_dashboard.sql`
+4. `migrations/0004_orbit_runtime_security.sql`
 
-The vector migration is additive. It does not cast, mutate, or drop the legacy Orbit `vector(128)` data. The dashboard migration adds server-side admin session/settings tables with no browser or tenant access. Re-embed source documents from private storage, validate counts/retrieval/tenant isolation, then cut over to the 768-dimensional fingerprint. See `docs/SUPABASE_MIGRATION_AND_REINDEX.md`.
+The vector migration is additive. It does not cast, mutate, or drop the legacy Orbit `vector(128)` data. The dashboard migration adds server-side admin session/settings tables with no browser or tenant access. The runtime-security migration restricts vector search RPC execution to the server role, completes missing tenant policies, keeps the knowledge bucket private, and records a readiness marker. Re-embed source documents from private storage, validate counts/retrieval/tenant isolation, then cut over to the 768-dimensional fingerprint. See `docs/SUPABASE_MIGRATION_AND_REINDEX.md`.
+
+By default, `DATABASE_PROVIDER`, `STORAGE_PROVIDER`, and `VECTOR_PROVIDER` are `auto`. Set only `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on the server after applying all four migrations; Orbit will select Supabase for database, storage, and vector search. If older Render variables explicitly set the provider trio to `sqlite` / `local` / `sqlite`, remove those overrides or set all three to `auto`.
+See `docs/ORBIT_UPDATE_VERIFICATION_2026-11-06.md` for the exact changes, test results, environment limitations, and deployment checklist.
 
 ## Admin dashboard
 

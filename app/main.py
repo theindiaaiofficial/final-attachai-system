@@ -30,7 +30,7 @@ from app.providers.embeddings import GeminiEmbeddings, OpenAICompatibleEmbedding
 from app.providers.llm import LiteLLMProvider
 from app.providers.speech import (
     SpeechProviderError, load_speech_adapter_modules, synthesize_speech,
-    transcribe_speech_with_language,
+    speech_media_type, stream_synthesize_speech, transcribe_speech_with_language,
 )
 from app.rag.evidence import EvidenceEvaluator
 from app.rag.generation import AnswerGenerator
@@ -62,14 +62,28 @@ class State:
         self.settings = settings
         self.provider_tests: dict[str, dict] = {}
         self.embeddings = GeminiEmbeddings(settings) if settings.embedding_provider.casefold() == "gemini" else OpenAICompatibleEmbeddings(settings)
-        key = settings.supabase_service_role_key.get_secret_value() if settings.supabase_service_role_key else ""
-        use_supabase = all(value.casefold() == "supabase" for value in (settings.database_provider, settings.storage_provider, settings.vector_provider)) and settings.supabase_url and key and not key.startswith("YOUR_")
-        if use_supabase:
-            self.repository = SupabaseRepository(settings.supabase_url, key, self.embeddings.fingerprint)
-            self.storage = SupabaseStorage(settings.supabase_url, key, settings.supabase_storage_bucket)
+        database_provider, storage_provider, vector_provider = settings.resolve_data_providers()
+        self.data_providers = {
+            "database": database_provider,
+            "storage": storage_provider,
+            "vector": vector_provider,
+        }
+        if database_provider == "supabase":
+            key = settings.supabase_service_role_key.get_secret_value()
+            self.repository = SupabaseRepository(settings.supabase_url or "", key, self.embeddings.fingerprint)
+            self.storage = SupabaseStorage(settings.supabase_url or "", key, settings.supabase_storage_bucket)
         else:
             self.repository = SQLiteRepository(settings.sqlite_path, self.embeddings.fingerprint)
             self.storage = LocalTenantStorage(settings.local_storage_path)
+
+        # Probe real services rather than marking a configured URL as connected.
+        self.backend_health: dict[str, dict[str, str]] = {}
+        for label, component in (("database", self.repository), ("storage", self.storage)):
+            try:
+                self.backend_health[label] = component.health()
+            except Exception as exc:
+                self.backend_health[label] = {"provider": getattr(component, "name", "unknown"), "status": "unavailable", "error": type(exc).__name__}
+                logger.warning("backend_health_failed component=%s provider=%s error_type=%s", label, getattr(component, "name", "unknown"), type(exc).__name__)
         staged = self.repository.setting("providers")
         if staged:
             for role in ("router", "answer"):
@@ -187,8 +201,35 @@ def health():
 
 @app.get("/ready")
 def ready(request: Request):
-    issues = state(request).settings.readiness_issues()
-    return JSONResponse({"status": "not_ready" if issues else "configured", "provider_completion": "not_tested"}, status_code=503 if issues else 200)
+    current = state(request)
+    issues = current.settings.readiness_issues()
+    # Re-probe at request time so readiness can recover after a transient remote
+    # outage and does not stay green if Supabase becomes unavailable after startup.
+    for label, component in (("database", current.repository), ("storage", current.storage)):
+        try:
+            current.backend_health[label] = component.health()
+        except Exception as exc:
+            current.backend_health[label] = {
+                "provider": getattr(component, "name", "unknown"),
+                "status": "unavailable",
+                "error": type(exc).__name__,
+            }
+            logger.warning(
+                "backend_health_failed component=%s provider=%s error_type=%s",
+                label, getattr(component, "name", "unknown"), type(exc).__name__,
+            )
+        if current.backend_health[label].get("status") != "ok":
+            issues.append(f"{label.title()} backend is not reachable or is not fully migrated")
+    return JSONResponse(
+        {
+            "status": "not_ready" if issues else "ready",
+            "data_providers": current.data_providers,
+            "backend_health": current.backend_health,
+            "issues": issues,
+            "provider_completion": "not_tested",
+        },
+        status_code=503 if issues else 200,
+    )
 
 
 @app.get("/metrics", dependencies=[Depends(require_admin)])
@@ -215,7 +256,6 @@ async def public_config(
         "theme": config.get("theme", {}),
         "speech": {
             "ttsEnabled": settings.tts_enabled,
-            "sttEnabled": settings.stt_enabled,
         },
     }
 
@@ -245,6 +285,22 @@ async def public_tts(
     except SpeechProviderError as exc:
         raise HTTPException(503, str(exc)) from None
     return Response(audio, media_type=media_type, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/v1/tts/stream")
+async def public_tts_stream(
+    payload: SpeechRequestPayload,
+    request: Request,
+    tenant: dict[str, Any] = Depends(tenant_context),
+) -> StreamingResponse:
+    settings = state(request).settings
+    if not settings.tts_enabled:
+        raise HTTPException(503, "Text-to-speech is not configured")
+    return StreamingResponse(
+        stream_synthesize_speech(settings, payload.text, payload.language),
+        media_type=speech_media_type(settings),
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/v1/stt")
@@ -282,11 +338,91 @@ async def public_chat(payload: ChatRequest, request: Request, tenant: dict[str, 
 
 
 @app.post("/v1/chat/stream")
-async def public_chat_stream(payload: ChatRequest, request: Request, tenant: dict[str, Any] = Depends(tenant_context)) -> StreamingResponse:
-    result = await public_chat(payload, request, tenant)
+async def public_chat_stream(
+    payload: ChatRequest,
+    request: Request,
+    tenant: dict[str, Any] = Depends(tenant_context),
+) -> StreamingResponse:
+    """Server-sent events for genuine generation chunks and verified RAG replies."""
+    current = state(request)
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+    progress_labels = {
+        "preparing": "Getting your conversation ready",
+        "understanding": "Understanding your question",
+        "retrieving": "Finding relevant information",
+        "checking_evidence": "Checking the available information",
+        "generating": "Writing your response",
+        "verifying": "Verifying the response",
+        "correcting": "Refining the response for accuracy",
+        "saving": "Finishing up",
+    }
+
+    async def produce() -> None:
+        tokens_sent = False
+
+        def send_progress(stage: str) -> None:
+            queue.put_nowait({"event": "progress", "data": {"stage": stage, "label": progress_labels.get(stage, "Working on your response")}})
+
+        def send_token(token: str) -> None:
+            nonlocal tokens_sent
+            if token:
+                tokens_sent = True
+                queue.put_nowait({"event": "token", "data": {"text": token}})
+
+        try:
+            result = await current.pipeline.handle(
+                tenant["id"], payload.message.strip(), payload.session_id,
+                request.state.request_id, on_progress=send_progress, on_token=send_token,
+            )
+            # For RAG responses, do not expose model-draft tokens before grounding
+            # verification. Once verified, send the final safe answer progressively.
+            if not tokens_sent:
+                answer = str(result.get("answer") or "")
+                for offset in range(0, len(answer), 48):
+                    send_token(answer[offset:offset + 48])
+            safe_result = {
+                **result,
+                "citations": [item.model_dump() if hasattr(item, "model_dump") else item for item in result.get("citations", [])],
+            }
+            queue.put_nowait({"event": "done", "data": safe_result})
+        except KeyError:
+            queue.put_nowait({"event": "error", "data": {"status": 404, "detail": "Conversation not found"}})
+        except ValueError as exc:
+            queue.put_nowait({"event": "error", "data": {"status": 400, "detail": str(exc)}})
+        except Exception as exc:
+            logger.error("chat_stream_failed request_id=%s category=%s", request.state.request_id, type(exc).__name__)
+            queue.put_nowait({"event": "error", "data": {"status": 503, "detail": "The assistant could not complete this request"}})
+        finally:
+            queue.put_nowait(None)
+
     async def events():
-        yield f"event: done\ndata: {json.dumps(result, ensure_ascii=False, default=lambda item: item.model_dump())}\n\n"
-    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
+        task = asyncio.create_task(produce())
+        try:
+            while True:
+                if await request.is_disconnected():
+                    task.cancel()
+                    break
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=15)
+                except TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+                if item is None:
+                    break
+                data = json.dumps(item["data"], ensure_ascii=False, default=lambda value: value.model_dump() if hasattr(value, "model_dump") else str(value))
+                yield f"event: {item['event']}\ndata: {data}\n\n"
+        finally:
+            if not task.done():
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    return StreamingResponse(
+        events(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
 
 
 @app.post("/v1/leads")

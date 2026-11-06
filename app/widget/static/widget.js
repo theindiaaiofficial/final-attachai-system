@@ -49,30 +49,8 @@
   let processingInterval = null;
   let assistantName = "Assistant";
   let welcome = "How can I help?";
-  let speechConfig = {ttsEnabled: false, sttEnabled: false};
-  let voiceMode = false;
-  let voiceMuted = false;
-  let voiceStateBeforeMute = "listening";
-  let voiceState = "idle";
-  let voiceSessionToken = 0;
-  let micStream = null;
-  let mediaRecorder = null;
-  let audioChunks = [];
-  let recognition = null;
-  let voiceAudioContext = null;
-  let voiceAnalyser = null;
-  let voiceMeterFrame = null;
-  let outputAudioContext = null;
-  let outputAudioAnalyser = null;
-  let outputMeterFrame = null;
-  let voiceStartedAt = 0;
-  let voiceLastHeardAt = 0;
-  let voiceSpeechDetected = false;
-  let activeSpeechRequest = null;
-  let activeTtsRequest = null;
-  let voiceLanguage = null;
-  let currentAudio = null;
-  let currentAudioUrl = null;
+  let speechConfig = {ttsEnabled: false};
+  let activeSpeech = null;
 
   const ICON_PATHS = {
     orbit: '<circle cx="12" cy="12" r="2.8"/><ellipse cx="12" cy="12" rx="9" ry="4.2" transform="rotate(-32 12 12)"/><circle cx="19.2" cy="6.1" r="1.2"/>',
@@ -83,18 +61,14 @@
     close: '<path d="m18 6-12 12M6 6l12 12"/>',
     trash: '<path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-    mic: '<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3m-4 0h8"/>',
-    micOff: '<path d="m3 3 18 18M9 9v3a3 3 0 0 0 5.1 2.1M15 9V6a3 3 0 0 0-5.8-1M5 11a7 7 0 0 0 12 4.9M12 18v3m-4 0h8"/>',
-    minus: '<path d="M5 12h14"/>',
     stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
     thumbsUp: '<path d="M7 10v10H4V10h3Zm0 9h9.2a2 2 0 0 0 1.9-1.4l1.4-5A2 2 0 0 0 17.6 10H13l.7-3.2A2.2 2.2 0 0 0 11.5 4L7 10v9Z"/>',
     thumbsDown: '<path d="M7 14V4H4v10h3Zm0-9h9.2a2 2 0 0 1 1.9 1.4l1.4 5a2 2 0 0 1-1.9 2.6H13l.7 3.2a2.2 2.2 0 0 1-2.2 2.8L7 14V5Z"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
     volume: '<path d="M4 10v4h4l5 4V6l-5 4H4Z"/><path d="M17 9a5 5 0 0 1 0 6m2-9a9 9 0 0 1 0 12"/>',
     send: '<path d="m21 3-7.2 18-3.4-7.4L3 10.2 21 3Z"/><path d="M10.4 13.6 21 3"/>',
-    audio: '<path d="M3 10v4m4-7v10m4-13v16m4-13v10m4-7v4m3-6v8"/>',
     pause: '<path d="M8 5v14M16 5v14"/>',
-    phoneOff: '<path d="m3 3 18 18M7.4 7.4a14.5 14.5 0 0 0 9.2 9.2M5.2 5.2A15.5 15.5 0 0 0 4 12c0 4.4 3.6 8 8 8 1.1 0 2.2-.2 3.2-.7M18.8 18.8A15.5 15.5 0 0 0 20 12c0-1.1-.2-2.2-.7-3.2"/>',
+    play: '<path d="m8 5 12 7-12 7V5Z"/>',
     refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.5 9a7 7 0 0 1 11.8-2L20 12M4 12l2.7 5a7 7 0 0 0 11.8-2"/>',
     check: '<path d="m5 12 4 4L19 6"/>',
   };
@@ -126,7 +100,7 @@
   const launcher = document.createElement("button");
   launcher.className = "orbit-launcher";
   launcher.type = "button";
-  launcher.innerHTML = `${iconSvg("message")}<span>Chat with us</span>`;
+  launcher.innerHTML = `${iconSvg("message")}<span>Chat</span>`;
   launcher.setAttribute("aria-expanded", "false");
   launcher.setAttribute("aria-label", "Open chat");
 
@@ -165,80 +139,6 @@
   const deleteButton = makeButton("orbit-delete", "Delete this conversation", "trash");
   timerBar.append(timerIcon, timerText, deleteButton);
 
-  const voicePanel = document.createElement("div");
-  voicePanel.className = "orbit-voice-panel";
-  voicePanel.hidden = true;
-  voicePanel.dataset.state = "idle";
-  const voiceTopline = document.createElement("div");
-  voiceTopline.className = "orbit-voice-topline";
-  const voiceLiveBadge = document.createElement("span");
-  voiceLiveBadge.className = "orbit-voice-live-badge";
-  voiceLiveBadge.textContent = "LIVE VOICE";
-  const voicePrivacy = document.createElement("span");
-  voicePrivacy.className = "orbit-voice-privacy";
-  voicePrivacy.textContent = "VOICE SESSION";
-  voiceTopline.append(voiceLiveBadge, voicePrivacy);
-
-  const voiceStage = document.createElement("div");
-  voiceStage.className = "orbit-voice-stage";
-  const voiceOrb = document.createElement("div");
-  voiceOrb.className = "orbit-voice-orb";
-  voiceOrb.setAttribute("aria-hidden", "true");
-  const voiceRingOuter = document.createElement("span");
-  voiceRingOuter.className = "orbit-orb-ring orbit-orb-ring-outer";
-  const voiceRingInner = document.createElement("span");
-  voiceRingInner.className = "orbit-orb-ring orbit-orb-ring-inner";
-  const voiceCore = document.createElement("span");
-  voiceCore.className = "orbit-orb-core";
-  const voiceAnimation = document.createElement("span");
-  voiceAnimation.className = "orbit-waveform";
-  for (let index = 0; index < 25; index += 1) {
-    const bar = document.createElement("i");
-    bar.style.setProperty("--bar-delay", `${index * -31}ms`);
-    bar.style.setProperty("--bar-height", `${Math.round(6 + Math.abs(Math.sin(index * 0.82)) * 10)}px`);
-    voiceAnimation.append(bar);
-  }
-  voiceCore.append(voiceAnimation);
-  voiceOrb.append(voiceRingOuter, voiceRingInner, voiceCore);
-
-  const voiceInfo = document.createElement("div");
-  voiceInfo.className = "orbit-voice-info";
-  const voiceStatus = document.createElement("strong");
-  voiceStatus.textContent = "Ready when you are";
-  voiceStatus.setAttribute("aria-live", "polite");
-  const micStatus = document.createElement("span");
-  micStatus.textContent = "Speak naturally. I’ll respond when you pause.";
-  micStatus.setAttribute("aria-live", "polite");
-  voiceInfo.append(voiceStatus, micStatus);
-
-  const voiceTranscript = document.createElement("div");
-  voiceTranscript.className = "orbit-voice-transcript";
-  voiceTranscript.setAttribute("aria-live", "polite");
-  const voiceTranscriptLabel = document.createElement("span");
-  voiceTranscriptLabel.textContent = "YOU";
-  const voiceTranscriptText = document.createElement("p");
-  voiceTranscriptText.textContent = "Your words will appear here";
-  voiceTranscript.append(voiceTranscriptLabel, voiceTranscriptText);
-
-  const voiceReply = document.createElement("div");
-  voiceReply.className = "orbit-voice-reply";
-  voiceReply.setAttribute("aria-live", "polite");
-  const voiceReplyLabel = document.createElement("span");
-  voiceReplyLabel.textContent = "ASSISTANT";
-  const voiceReplyText = document.createElement("p");
-  voiceReplyText.textContent = "Your assistant’s reply will appear here";
-  voiceReply.append(voiceReplyLabel, voiceReplyText);
-  voiceStage.append(voiceOrb, voiceInfo, voiceTranscript, voiceReply);
-
-  const voiceActions = document.createElement("div");
-  voiceActions.className = "orbit-voice-actions";
-  const muteButton = makeButton("orbit-voice-control", "Mute microphone", "mic");
-  const interruptButton = makeButton("orbit-voice-interrupt", "Interrupt assistant", "pause");
-  const minimizeVoiceButton = makeButton("orbit-voice-control", "Minimize voice chat", "minus");
-  const stopVoiceButton = makeButton("orbit-voice-stop", "End voice conversation", "phoneOff");
-  voiceActions.append(muteButton, interruptButton, minimizeVoiceButton, stopVoiceButton);
-  voicePanel.append(voiceTopline, voiceStage, voiceActions);
-
   const log = document.createElement("div");
   log.className = "orbit-messages";
   log.setAttribute("role", "log");
@@ -259,7 +159,7 @@
   send.type = "submit";
   send.setAttribute("aria-label", "Start voice message");
   compose.append(input, send);
-  panel.append(head, timerBar, voicePanel, log, status, compose);
+  panel.append(head, timerBar, log, status, compose);
   shadow.append(panel, launcher);
   document.body.append(root);
 
@@ -381,16 +281,63 @@
     else bubble.textContent = item.content;
     contentWrap.append(bubble);
 
-
-
     if (item.role === "assistant") {
+      const speechPlayer = document.createElement("div");
+      speechPlayer.className = "orbit-speech-player";
+      speechPlayer.hidden = true;
+      speechPlayer.dataset.state = "idle";
+      speechPlayer.setAttribute("aria-live", "polite");
+
+      const speechHeader = document.createElement("div");
+      speechHeader.className = "orbit-speech-header";
+      const speechLabel = document.createElement("span");
+      speechLabel.className = "orbit-speech-label";
+      speechLabel.textContent = "Preparing audio…";
+      const speechWave = document.createElement("span");
+      speechWave.className = "orbit-speech-wave";
+      speechWave.setAttribute("aria-hidden", "true");
+      for (let barIndex = 0; barIndex < 19; barIndex += 1) {
+        const bar = document.createElement("i");
+        bar.style.setProperty("--wave-delay", `${barIndex * 37}ms`);
+        bar.style.setProperty("--wave-height", `${5 + Math.round(Math.abs(Math.sin(barIndex * .73)) * 12)}px`);
+        speechWave.append(bar);
+      }
+      const speechSpinner = document.createElement("span");
+      speechSpinner.className = "orbit-speech-spinner";
+      speechSpinner.setAttribute("aria-hidden", "true");
+      speechHeader.append(speechSpinner, speechLabel, speechWave);
+
+      const speechProgress = document.createElement("div");
+      speechProgress.className = "orbit-speech-progress";
+      const speechProgressFill = document.createElement("span");
+      speechProgress.append(speechProgressFill);
+      const speechMeta = document.createElement("div");
+      speechMeta.className = "orbit-speech-meta";
+      const speechElapsed = document.createElement("span");
+      speechElapsed.textContent = "0:00";
+      const speechTotal = document.createElement("span");
+      speechTotal.textContent = "--:--";
+      speechMeta.append(speechElapsed, speechTotal);
+
+      const speechControls = document.createElement("div");
+      speechControls.className = "orbit-speech-controls";
+      const pauseSpeech = makeButton("orbit-speech-control", "Pause speech", "pause");
+      const stopSpeech = makeButton("orbit-speech-control", "Stop speech", "stop");
+      pauseSpeech.disabled = true;
+      stopSpeech.disabled = true;
+      speechControls.append(pauseSpeech, stopSpeech);
+      speechPlayer.append(speechHeader, speechProgress, speechMeta, speechControls);
+
       const actions = document.createElement("div");
       actions.className = "orbit-message-actions";
       const like = makeButton("orbit-message-action", "Like response", "thumbsUp");
       const copy = makeButton("orbit-message-action", "Copy response", "copy");
+      const speak = makeButton("orbit-message-action", "Speak response", "volume");
       const dislike = makeButton("orbit-message-action", "Dislike response", "thumbsDown");
       const share = makeButton("orbit-message-action", "Share response", "share");
-      const speak = makeButton("orbit-message-action", "Speak response", "volume");
+      speak.hidden = !speechConfig.ttsEnabled;
+      speak.disabled = !speechConfig.ttsEnabled;
+      if (!speechConfig.ttsEnabled) speak.title = "Text-to-speech is not configured";
       if (item.reaction === "like") like.classList.add("selected");
       if (item.reaction === "dislike") dislike.classList.add("selected");
       like.setAttribute("aria-pressed", String(item.reaction === "like"));
@@ -402,9 +349,24 @@
         else showStatus("Could not copy this response.");
       });
       share.addEventListener("click", () => shareText(cleanVisitorText(item.content), "Assistant response"));
-      speak.addEventListener("click", () => speakText(cleanVisitorText(item.content)));
-      actions.append(like, copy, dislike, share, speak);
-      contentWrap.append(actions);
+      speak.addEventListener("click", () => {
+        void speakText(cleanVisitorText(item.content), {
+          player: speechPlayer,
+          label: speechLabel,
+          wave: speechWave,
+          spinner: speechSpinner,
+          progress: speechProgressFill,
+          elapsed: speechElapsed,
+          total: speechTotal,
+          pauseButton: pauseSpeech,
+          stopButton: stopSpeech,
+          speakerButton: speak,
+        });
+      });
+      pauseSpeech.addEventListener("click", () => toggleSpeechPause(speechPlayer));
+      stopSpeech.addEventListener("click", () => stopSpeechPlayback(speechPlayer));
+      actions.append(like, copy, speak, dislike, share);
+      contentWrap.append(speechPlayer, actions);
     }
     row.append(avatar, contentWrap);
     log.append(row);
@@ -451,16 +413,44 @@
     log.append(row);
     scrollLatest();
 
-    const phases = [
-      "Understanding your question",
-      "Reviewing relevant context",
-      "Preparing a helpful response",
-    ];
-    let phase = 0;
-    processingInterval = window.setInterval(() => {
-      phase = (phase + 1) % phases.length;
-      label.textContent = phases[phase];
-    }, 1900);
+  }
+
+  function updateProcessingLabel(value) {
+    const label = log.querySelector("#orbit-typing .orbit-thinking-label");
+    if (label && value) label.textContent = value;
+  }
+
+  async function consumeEventStream(response, onEvent) {
+    if (!response.body?.getReader) throw new Error("Streaming is not supported by this browser.");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const dispatch = raw => {
+      let eventName = "message";
+      const dataLines = [];
+      for (const line of raw.split(/\r?\n/)) {
+        if (line.startsWith("event:")) eventName = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+      }
+      if (!dataLines.length) return;
+      let data;
+      try { data = JSON.parse(dataLines.join("\n")); }
+      catch { throw new Error("The response stream contained invalid data."); }
+      onEvent(eventName, data);
+    };
+    while (true) {
+      const {value, done} = await reader.read();
+      if (value) buffer += decoder.decode(value, {stream: true});
+      if (done) buffer += decoder.decode();
+      let boundary;
+      while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+        const raw = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        if (raw.trim()) dispatch(raw);
+      }
+      if (done) break;
+    }
+    if (buffer.trim()) dispatch(buffer);
   }
 
   async function revealAssistantMessage(value) {
@@ -495,6 +485,8 @@
   }
 
   function renderAll() {
+    // Rebuilding the message DOM must not leave playback attached to a removed row.
+    if (activeSpeech) cleanupSpeech(activeSpeech);
     log.replaceChildren();
     if (!messages.length) {
       const welcomeNode = document.createElement("div");
@@ -576,159 +568,174 @@
     renderAll();
   }
 
-  function releaseCurrentAudio(audio = currentAudio) {
-    if (audio && audio === currentAudio) currentAudio = null;
-    stopOutputMeter();
-    if (currentAudioUrl) {
-      URL.revokeObjectURL(currentAudioUrl);
-      currentAudioUrl = null;
+  function formatSpeechTime(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return "--:--";
+    const whole = Math.floor(seconds);
+    const minutes = Math.floor(whole / 60);
+    const remainder = whole % 60;
+    return `${minutes}:${String(remainder).padStart(2, "0")}`;
+  }
+
+  function setSpeechState(ui, state, label) {
+    if (!ui?.player) return;
+    ui.player.hidden = false;
+    ui.player.dataset.state = state;
+    if (label) ui.label.textContent = label;
+    ui.spinner.hidden = state !== "loading";
+    ui.wave.hidden = !["playing", "paused", "complete"].includes(state);
+    ui.pauseButton.disabled = !["playing", "paused", "ready"].includes(state);
+    ui.stopButton.disabled = !["playing", "paused", "loading", "ready"].includes(state);
+    const canResume = state === "paused" || state === "ready";
+    ui.pauseButton.innerHTML = iconSvg(canResume ? "play" : "pause");
+    ui.pauseButton.setAttribute("aria-label", canResume ? "Play speech" : "Pause speech");
+    ui.pauseButton.title = canResume ? "Play speech" : "Pause speech";
+  }
+
+  function cleanupSpeech(state, keepPlayer = false) {
+    if (!state) return;
+    if (state.controller && !state.controller.signal.aborted) state.controller.abort();
+    if (state.audio) {
+      try { state.audio.pause(); } catch { /* playback may already be stopped */ }
+      state.audio.removeAttribute("src");
+      try { state.audio.load(); } catch { /* browser may already have released it */ }
+    }
+    if (state.url) {
+      URL.revokeObjectURL(state.url);
+      state.url = null;
+    }
+    if (activeSpeech === state) activeSpeech = null;
+    state.speakerButton?.classList.remove("selected");
+    if (!keepPlayer) state.ui.player.hidden = true;
+  }
+
+  function stopSpeechPlayback(player) {
+    if (!activeSpeech || activeSpeech.ui.player !== player) return;
+    const state = activeSpeech;
+    cleanupSpeech(state);
+    state.ui.player.hidden = true;
+  }
+
+  function toggleSpeechPause(player) {
+    const state = activeSpeech;
+    if (!state || state.ui.player !== player || !state.audio) return;
+    if (state.audio.paused) {
+      state.audio.play().then(() => {
+        setSpeechState(state.ui, "playing", "Speaking response");
+      }).catch(error => {
+        if (error?.name === "NotAllowedError") {
+          setSpeechState(state.ui, "ready", "Audio ready — tap play");
+        } else {
+          cleanupSpeech(state);
+          setSpeechState(state.ui, "error", "Playback could not resume");
+        }
+      });
+    } else {
+      state.audio.pause();
+      setSpeechState(state.ui, "paused", "Paused");
     }
   }
 
-  async function startOutputMeter(audio) {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass || !audio) return;
-    try {
-      outputAudioContext = new AudioContextClass();
-      if (outputAudioContext.state === "suspended") await outputAudioContext.resume();
-      outputAudioAnalyser = outputAudioContext.createAnalyser();
-      outputAudioAnalyser.fftSize = 256;
-      outputAudioAnalyser.smoothingTimeConstant = 0.2;
-      const source = outputAudioContext.createMediaElementSource(audio);
-      source.connect(outputAudioAnalyser);
-      outputAudioAnalyser.connect(outputAudioContext.destination);
-      const samples = new Float32Array(outputAudioAnalyser.fftSize);
-      const measure = () => {
-        if (!outputAudioAnalyser || audio !== currentAudio) {
-          outputMeterFrame = null;
-          return;
-        }
-        outputAudioAnalyser.getFloatTimeDomainData(samples);
-        let energy = 0;
-        for (let index = 0; index < samples.length; index += 1) energy += samples[index] * samples[index];
-        updateVoiceLevel(Math.min(1, Math.sqrt(energy / samples.length) * 9));
-        outputMeterFrame = window.requestAnimationFrame(measure);
-      };
-      outputMeterFrame = window.requestAnimationFrame(measure);
-    } catch {
-      stopOutputMeter();
-    }
+  function updateSpeechProgress(state) {
+    if (!state?.audio || activeSpeech !== state) return;
+    const duration = state.audio.duration;
+    const current = state.audio.currentTime || 0;
+    state.ui.elapsed.textContent = formatSpeechTime(current);
+    state.ui.total.textContent = formatSpeechTime(duration);
+    const ratio = Number.isFinite(duration) && duration > 0 ? Math.min(1, current / duration) : 0;
+    state.ui.progress.style.width = `${ratio * 100}%`;
   }
 
-  function stopOutputMeter() {
-    if (outputMeterFrame !== null) window.cancelAnimationFrame(outputMeterFrame);
-    outputMeterFrame = null;
-    outputAudioAnalyser = null;
-    if (outputAudioContext) {
-      const context = outputAudioContext;
-      outputAudioContext = null;
-      try { context.close().catch(() => {}); } catch { /* context may already be closed */ }
+  async function speakText(text, ui) {
+    if (!speechConfig.ttsEnabled) {
+      setSpeechState(ui, "error", "Text-to-speech is not configured");
+      return false;
     }
-    if (voiceState !== "listening") updateVoiceLevel(0);
-  }
 
-  function cancelCurrentSpeech() {
-    if (activeTtsRequest) {
-      activeTtsRequest.abort();
-      activeTtsRequest = null;
-    }
-    stopOutputMeter();
-    if (currentAudio) {
-      const audio = currentAudio;
-      currentAudio = null;
-      try { audio.pause(); } catch { /* playback may already be stopped */ }
-    }
-    if (currentAudioUrl) {
-      URL.revokeObjectURL(currentAudioUrl);
-      currentAudioUrl = null;
-    }
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
-  }
-
-  async function speakText(text, options = {}) {
-    cancelCurrentSpeech();
-    const liveVoice = options.liveVoice === true;
-    const waitForEnd = options.waitForEnd === true;
-    const language = options.language || voiceLanguage || null;
-
-    if (speechConfig.ttsEnabled) {
-      const controller = new AbortController();
-      activeTtsRequest = controller;
-      try {
-        const response = await fetch(`${base}/v1/tts`, {
-          method: "POST",
-          headers: {"Content-Type": "application/json", "X-API-Key": apiKey},
-          body: JSON.stringify({text, language}),
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.detail || `TTS request failed (${response.status})`);
-        }
-        const blob = await response.blob();
-        if (controller.signal.aborted || (liveVoice && !voiceMode)) return false;
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        currentAudioUrl = url;
-        currentAudio = audio;
-        if (liveVoice) {
-          voiceState = "speaking";
-          setVoiceUi("Speaking…", "Assistant is responding");
-          await startOutputMeter(audio);
-          if (!voiceMode) return false;
-        }
-
-        let settlePlayback;
-        const playbackFinished = new Promise(resolve => { settlePlayback = resolve; });
-        let settled = false;
-        const finishPlayback = played => {
-          if (settled) return;
-          settled = true;
-          if (audio === currentAudio) releaseCurrentAudio(audio);
-          settlePlayback(played);
-        };
-        audio.addEventListener("ended", () => finishPlayback(true), {once: true});
-        audio.addEventListener("error", () => finishPlayback(false), {once: true});
-        audio.addEventListener("pause", () => {
-          if (!audio.ended) finishPlayback(false);
-        }, {once: true});
-        await audio.play();
-        if (activeTtsRequest === controller) activeTtsRequest = null;
-        if (waitForEnd) return await playbackFinished;
-        return true;
-      } catch (error) {
-        if (activeTtsRequest === controller) activeTtsRequest = null;
-        if (error?.name !== "AbortError") {
-          if (liveVoice) {
-            voiceStatus.textContent = "Voice playback unavailable";
-            micStatus.textContent = "Please check the audio output and try again";
-          }
-          showStatus("Text-to-speech could not play this response.");
-        }
+    if (activeSpeech) {
+      const wasSamePlayer = activeSpeech.ui.player === ui.player;
+      cleanupSpeech(activeSpeech);
+      if (wasSamePlayer) {
+        ui.player.hidden = true;
         return false;
       }
     }
 
-    if (window.speechSynthesis && window.SpeechSynthesisUtterance) {
-      const utterance = new SpeechSynthesisUtterance(cleanVisitorText(text));
-      utterance.lang = language || document.documentElement.lang || navigator.language || "en-US";
-      if (liveVoice) {
-        voiceState = "speaking";
-        setVoiceUi("Speaking…", "Assistant is responding");
-      }
-      if (!waitForEnd) {
-        window.speechSynthesis.speak(utterance);
-        return true;
-      }
-      return await new Promise(resolve => {
-        utterance.onend = () => resolve(true);
-        utterance.onerror = () => resolve(false);
-        window.speechSynthesis.speak(utterance);
-      });
-    }
+    const controller = new AbortController();
+    const state = {controller, audio: null, url: null, ui, speakerButton: ui.speakerButton};
+    activeSpeech = state;
+    state.speakerButton.classList.add("selected");
+    ui.player.hidden = false;
+    ui.progress.style.width = "0%";
+    ui.elapsed.textContent = "0:00";
+    ui.total.textContent = "--:--";
+    setSpeechState(ui, "loading", "Preparing audio…");
 
-    showStatus("Text-to-speech is not supported in this browser.");
-    return false;
+    try {
+      const language = /[\u0900-\u097F]/u.test(text) ? "hi" : null;
+      const response = await fetch(`${base}/v1/tts`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-API-Key": apiKey},
+        body: JSON.stringify({text, language}),
+        signal: controller.signal,
+      });
+      const errorData = response.ok ? null : await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(errorData?.detail || `TTS request failed (${response.status})`);
+      const blob = await response.blob();
+      if (activeSpeech !== state || controller.signal.aborted) return false;
+      if (!blob.size) throw new Error("The speech provider returned empty audio.");
+
+      const mediaType = response.headers.get("content-type") || blob.type || "audio/mpeg";
+      const normalizedMediaType = String(mediaType).split(";", 1)[0].trim();
+      const audioBlob = (!blob.type || blob.type === "application/octet-stream")
+        ? new Blob([blob], {type: normalizedMediaType || "audio/mpeg"})
+        : blob;
+      state.url = URL.createObjectURL(audioBlob);
+      state.audio = new Audio();
+      state.audio.preload = "metadata";
+      state.audio.src = state.url;
+      state.audio.addEventListener("loadedmetadata", () => updateSpeechProgress(state));
+      state.audio.addEventListener("durationchange", () => updateSpeechProgress(state));
+      state.audio.addEventListener("timeupdate", () => updateSpeechProgress(state));
+      state.audio.addEventListener("playing", () => setSpeechState(ui, "playing", "Speaking response"));
+      state.audio.addEventListener("pause", () => {
+        if (activeSpeech === state && state.audio && !state.audio.ended) {
+          setSpeechState(ui, "paused", "Paused");
+        }
+      });
+      state.audio.addEventListener("ended", () => {
+        if (activeSpeech !== state) return;
+        ui.progress.style.width = "100%";
+        ui.elapsed.textContent = formatSpeechTime(state.audio.duration);
+        setSpeechState(ui, "complete", "Finished speaking");
+        cleanupSpeech(state, true);
+        ui.player.dataset.state = "complete";
+        ui.wave.hidden = false;
+      }, {once: true});
+      state.audio.addEventListener("error", () => {
+        if (activeSpeech !== state) return;
+        cleanupSpeech(state);
+        setSpeechState(ui, "error", "Audio playback failed");
+      }, {once: true});
+
+      // The provider is fully abstracted behind /v1/tts. Native SDK, Deepgram,
+      // OpenAI-compatible endpoints, and registered custom adapters all return
+      // the same audio-bytes + media-type contract to this player.
+      await state.audio.play();
+      if (activeSpeech === state) setSpeechState(ui, "playing", "Speaking response");
+      return true;
+    } catch (error) {
+      if (error?.name === "AbortError") return false;
+      if (error?.name === "NotAllowedError" && activeSpeech === state) {
+        // Some browsers expire the original click activation while the provider
+        // is generating audio. Keep the ready player visible so the visitor can
+        // start playback with one explicit tap instead of losing the audio.
+        setSpeechState(ui, "ready", "Audio ready — tap play");
+        return false;
+      }
+      if (activeSpeech === state) cleanupSpeech(state);
+      setSpeechState(ui, "error", error instanceof Error ? error.message : "Text-to-speech failed");
+      return false;
+    }
   }
 
   async function deleteRemoteConversation(id) {
@@ -751,7 +758,7 @@
     }
     if (ask && messages.length && !window.confirm("Delete this entire conversation and start fresh?")) return;
     const oldSessionId = sessionId;
-    if (voiceMode) finishVoice();
+    if (activeSpeech) cleanupSpeech(activeSpeech);
     if (activeRequest) activeRequest.abort();
     sessionId = null;
     messages = [];
@@ -764,11 +771,9 @@
     updateTimer();
   }
 
-  async function sendMessage(value, options = {}) {
+  async function sendMessage(value) {
     const text = value.trim();
     if (!text || busy) return;
-    const liveVoice = options.voice === true;
-    const sessionToken = options.sessionToken ?? voiceSessionToken;
     busy = true;
     deleteButton.disabled = true;
     showStatus("");
@@ -783,56 +788,71 @@
     renderAll();
     renderTyping();
     activeRequest = new AbortController();
+    let streamedText = "";
+    let streamBubble = null;
+    let finalData = null;
+
+    const showStreamedText = value => {
+      if (!streamBubble) {
+        const row = document.createElement("article");
+        row.className = "orbit-message assistant";
+        const avatar = document.createElement("div");
+        avatar.className = "orbit-avatar";
+        avatar.innerHTML = iconSvg("bot");
+        const content = document.createElement("div");
+        content.className = "orbit-message-content";
+        streamBubble = document.createElement("div");
+        streamBubble.className = "orbit-bubble";
+        content.append(streamBubble);
+        row.append(avatar, content);
+        log.append(row);
+      }
+      streamBubble.innerHTML = markdown(cleanVisitorText(value));
+      scrollLatest();
+    };
+
     try {
-      const response = await fetch(`${base}/v1/chat`, {
+      const response = await fetch(`${base}/v1/chat/stream`, {
         method: "POST",
         headers: {"Content-Type": "application/json", "X-API-Key": apiKey},
         body: JSON.stringify({message: text, session_id: sessionId || undefined}),
         signal: activeRequest.signal,
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
-      sessionId = data.session_id;
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Request failed (${response.status})`);
+      }
+      await consumeEventStream(response, (eventName, data) => {
+        if (eventName === "progress") {
+          updateProcessingLabel(data.label || "Working on your response");
+        } else if (eventName === "token") {
+          streamedText += String(data.text || "");
+          showStreamedText(streamedText);
+        } else if (eventName === "done") {
+          finalData = data;
+        } else if (eventName === "error") {
+          throw new Error(data.detail || "The assistant could not complete this request.");
+        }
+      });
+      if (!finalData) throw new Error("The response stream ended before the answer was complete.");
+      sessionId = finalData.session_id;
       stopProcessing();
       log.querySelector("#orbit-typing")?.remove();
-      const answer = data.answer || "I could not produce an answer.";
-      if (liveVoice) {
-        voiceReplyText.textContent = cleanVisitorText(answer);
-      } else {
-        await revealAssistantMessage(answer);
-      }
+      const answer = finalData.answer || streamedText || "I could not produce an answer.";
       messages.push({
         role: "assistant",
         content: answer,
-        citations: Array.isArray(data.citations) ? data.citations : [],
+        citations: Array.isArray(finalData.citations) ? finalData.citations : [],
       });
       persist();
       renderAll();
-      if (liveVoice && voiceMode && sessionToken === voiceSessionToken) {
-        await speakText(answer, {language: options.language || voiceLanguage, liveVoice: true, waitForEnd: true});
-        if (voiceMode && sessionToken === voiceSessionToken) {
-          if (!voiceMuted) {
-            await continueVoiceListening();
-          } else {
-            voiceState = "muted";
-            voiceStateBeforeMute = "listening";
-            setVoiceUi("Microphone muted", "Unmute to continue the conversation");
-          }
-        }
-      }
     } catch (error) {
       stopProcessing();
       log.querySelector("#orbit-typing")?.remove();
       if (error?.name !== "AbortError") {
+        streamBubble?.closest(".orbit-message")?.remove();
         const message = error instanceof Error ? error.message : "The assistant could not complete that request.";
         showStatus(message);
-        if (liveVoice && voiceMode && sessionToken === voiceSessionToken) {
-          voiceState = "error";
-          setVoiceUi("I couldn’t complete that", "Please try speaking again");
-          window.setTimeout(() => {
-            if (voiceMode && sessionToken === voiceSessionToken && !voiceMuted && !busy) continueVoiceListening();
-          }, 1400);
-        }
         const row = document.createElement("article");
         row.className = "orbit-message assistant";
         const avatar = document.createElement("div");
@@ -860,393 +880,25 @@
       busy = false;
       activeRequest = null;
       deleteButton.disabled = false;
-      send.disabled = false;
       input.disabled = false;
       updateComposeButton();
-      if (!panel.hidden && !voiceMode) input.focus();
+      if (!panel.hidden) input.focus();
     }
   }
 
   function updateComposeButton() {
-    if (input.value.trim()) {
-      send.innerHTML = iconSvg("send");
-      send.setAttribute("aria-label", "Send message");
-      send.title = "Send message";
-    } else {
-      send.innerHTML = iconSvg(voiceMode ? "phoneOff" : "audio");
-      send.setAttribute("aria-label", voiceMode ? "End voice conversation" : "Start live voice conversation");
-      send.title = voiceMode ? "End voice conversation" : "Start live voice conversation";
-    }
-  }
-
-  function setVoiceUi(message, permission) {
-    voicePanel.hidden = !voiceMode;
-    voicePanel.dataset.state = voiceState;
-    if (message) voiceStatus.textContent = message;
-    if (permission) micStatus.textContent = permission;
-    muteButton.innerHTML = iconSvg(voiceMuted ? "micOff" : "mic");
-    muteButton.setAttribute("aria-label", voiceMuted ? "Unmute microphone" : "Mute microphone");
-    muteButton.title = voiceMuted ? "Unmute microphone" : "Mute microphone";
-    interruptButton.disabled = voiceState !== "speaking";
-    interruptButton.setAttribute("aria-label", "Interrupt assistant and speak");
-    interruptButton.title = voiceState === "speaking" ? "Interrupt assistant and speak" : "Interrupt available while assistant is speaking";
-    launcher.classList.toggle("voice-active", voiceMode && panel.hidden);
-    launcher.classList.toggle("voice-muted", voiceMode && voiceMuted);
-    launcher.innerHTML = voiceMode && panel.hidden
-      ? `<span class="orbit-launcher-wave">${iconSvg("audio")}</span><span class="orbit-launcher-mic">${iconSvg("mic")}</span><i class="orbit-mic-dot"></i>`
-      : `${iconSvg("message")}<span>Chat with us</span>`;
-    launcher.setAttribute("aria-label", voiceMode && panel.hidden ? "Return to active voice chat" : "Open chat");
-    updateComposeButton();
-  }
-
-  function updateVoiceLevel(level) {
-    const normalized = Math.max(0, Math.min(1, level));
-    voiceOrb.style.setProperty("--voice-level", normalized.toFixed(3));
-    voiceOrb.style.setProperty("--orb-scale", (1 + normalized * 0.035).toFixed(3));
-  }
-
-  function startVoiceMeter() {
-    if (!voiceAnalyser || voiceMeterFrame !== null) return;
-    const samples = new Float32Array(voiceAnalyser.fftSize);
-    const measure = () => {
-      if (!voiceMode || !voiceAnalyser) {
-        voiceMeterFrame = null;
-        return;
-      }
-      voiceAnalyser.getFloatTimeDomainData(samples);
-      let energy = 0;
-      for (let index = 0; index < samples.length; index += 1) energy += samples[index] * samples[index];
-      const rms = Math.sqrt(energy / samples.length);
-
-      if (voiceState === "listening" && mediaRecorder?.state === "recording" && !voiceMuted) {
-        updateVoiceLevel(Math.min(1, rms * 7));
-        const now = Date.now();
-        if (rms > 0.018) {
-          voiceSpeechDetected = true;
-          voiceLastHeardAt = now;
-          if (voiceStatus.textContent !== "Listening…") voiceStatus.textContent = "Listening…";
-        }
-        if (voiceSpeechDetected && now - voiceLastHeardAt > 1150 && now - voiceStartedAt > 650) {
-          stopVoiceRecording();
-        } else if (now - voiceStartedAt > 25000) {
-          stopVoiceRecording();
-        } else if (!voiceSpeechDetected && now - voiceStartedAt > 15000) {
-          stopVoiceRecording();
-        }
-      } else if (voiceState !== "speaking") {
-        updateVoiceLevel(0);
-      }
-      voiceMeterFrame = window.requestAnimationFrame(measure);
-    };
-    voiceMeterFrame = window.requestAnimationFrame(measure);
-  }
-
-  async function setupVoiceMeter() {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass || !micStream) return;
-    try {
-      voiceAudioContext = new AudioContextClass();
-      if (voiceAudioContext.state === "suspended") await voiceAudioContext.resume();
-      voiceAnalyser = voiceAudioContext.createAnalyser();
-      voiceAnalyser.fftSize = 512;
-      voiceAnalyser.smoothingTimeConstant = 0.18;
-      const source = voiceAudioContext.createMediaStreamSource(micStream);
-      source.connect(voiceAnalyser);
-      startVoiceMeter();
-    } catch {
-      voiceAnalyser = null;
-      voiceStatus.textContent = "Listening… pause briefly when you finish";
-    }
-  }
-
-  function stopVoiceMeter() {
-    if (voiceMeterFrame !== null) window.cancelAnimationFrame(voiceMeterFrame);
-    voiceMeterFrame = null;
-    voiceAnalyser = null;
-    if (voiceAudioContext) {
-      const context = voiceAudioContext;
-      voiceAudioContext = null;
-      try { context.close().catch(() => {}); } catch { /* context may already be closed */ }
-    }
-    updateVoiceLevel(0);
-  }
-
-  function stopMicrophoneTracks() {
-    const recorder = mediaRecorder;
-    if (recorder && recorder.state === "recording") {
-      recorder._orbitDiscard = true;
-      try { recorder.stop(); } catch { /* recorder may already be stopping */ }
-    }
-    mediaRecorder = null;
-    if (micStream) micStream.getTracks().forEach(track => track.stop());
-    micStream = null;
-    audioChunks = [];
-    stopVoiceMeter();
-  }
-
-  function finishVoice() {
-    voiceSessionToken += 1;
-    voiceMode = false;
-    voiceMuted = false;
-    voiceState = "idle";
-    voiceStateBeforeMute = "listening";
-    if (activeSpeechRequest) {
-      activeSpeechRequest.abort();
-      activeSpeechRequest = null;
-    }
-    if (recognition) {
-      const recognizer = recognition;
-      recognition = null;
-      try { recognizer.onend = null; recognizer.stop(); } catch { /* already stopped */ }
-    }
-    cancelCurrentSpeech();
-    stopMicrophoneTracks();
-    setVoiceUi("Voice conversation ended", "Microphone off");
-    window.setTimeout(() => {
-      if (!voiceMode) {
-        voiceStatus.textContent = "Ready when you are";
-        micStatus.textContent = "Speak naturally. I’ll respond when you pause.";
-      }
-    }, 900);
-  }
-
-  function stopVoiceRecording() {
-    if (mediaRecorder?.state === "recording") {
-      try { mediaRecorder.stop(); } catch { /* recorder may already be stopping */ }
-    }
-  }
-
-  function inferLanguageFromText(text) {
-    return /[\u0900-\u097F]/.test(text) ? "hi" : null;
-  }
-
-  async function handleVoiceRecording(recorder, chunks, sessionToken) {
-    if (!voiceMode || sessionToken !== voiceSessionToken || recorder._orbitDiscard) return;
-    mediaRecorder = null;
-    const mime = recorder.mimeType || chunks[0]?.type || "audio/webm";
-    const extension = mime.includes("mp4") ? "m4a" : mime.includes("ogg") ? "ogg" : "webm";
-    const blob = new Blob(chunks, {type: mime});
-    if (!blob.size) {
-      voiceState = "error";
-      setVoiceUi("I didn’t catch that", "Please speak a little louder");
-      window.setTimeout(() => continueVoiceListening(), 900);
-      return;
-    }
-
-    voiceState = "thinking";
-    setVoiceUi("Understanding you…", "Turning your speech into text");
-    const controller = new AbortController();
-    activeSpeechRequest = controller;
-    try {
-      const form = new FormData();
-      form.append("file", blob, `recording.${extension}`);
-      const response = await fetch(`${base}/v1/stt`, {
-        method: "POST",
-        headers: {"X-API-Key": apiKey},
-        body: form,
-        signal: controller.signal,
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.detail || "Speech recognition failed.");
-      const transcript = String(data.text || "").trim();
-      if (!transcript) throw new Error("No speech was detected. Please try again.");
-      voiceLanguage = data.language || inferLanguageFromText(transcript);
-      voiceTranscriptText.textContent = transcript;
-      await sendMessage(transcript, {voice: true, language: voiceLanguage, sessionToken});
-    } catch (error) {
-      if (error?.name !== "AbortError" && voiceMode && sessionToken === voiceSessionToken) {
-        voiceState = "error";
-        setVoiceUi("I couldn’t hear that clearly", error instanceof Error ? error.message : "Please try again");
-        window.setTimeout(() => {
-          if (voiceMode && sessionToken === voiceSessionToken && !voiceMuted && !busy) continueVoiceListening();
-        }, 1500);
-      }
-    } finally {
-      if (activeSpeechRequest === controller) activeSpeechRequest = null;
-    }
-  }
-
-  function startRecorderTurn() {
-    if (!voiceMode || voiceMuted || !micStream) return;
-    if (mediaRecorder?.state === "recording") return;
-    const preferred = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(type => MediaRecorder.isTypeSupported(type));
-    const recorder = preferred ? new MediaRecorder(micStream, {mimeType: preferred}) : new MediaRecorder(micStream);
-    const chunks = [];
-    const sessionToken = voiceSessionToken;
-    mediaRecorder = recorder;
-    voiceStartedAt = Date.now();
-    voiceLastHeardAt = 0;
-    voiceSpeechDetected = false;
-    recorder.addEventListener("dataavailable", event => {
-      if (event.data?.size) chunks.push(event.data);
-    });
-    recorder.addEventListener("stop", () => {
-      if (recorder._orbitFallbackTimer) window.clearTimeout(recorder._orbitFallbackTimer);
-      void handleVoiceRecording(recorder, chunks, sessionToken);
-    }, {once: true});
-    recorder.addEventListener("error", () => {
-      if (sessionToken === voiceSessionToken && voiceMode) {
-        voiceState = "error";
-        setVoiceUi("Microphone issue", "Please check your microphone and try again");
-      }
-    }, {once: true});
-    recorder.start(250);
-    if (!voiceAnalyser) {
-      recorder._orbitFallbackTimer = window.setTimeout(() => {
-        if (recorder.state === "recording") stopVoiceRecording();
-      }, 12000);
-    }
-    voiceState = "listening";
-    setVoiceUi("Listening…", "Speak naturally. I’ll respond when you pause.");
-    if (voiceAnalyser) startVoiceMeter();
-  }
-
-  async function startRemoteVoice() {
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      throw new Error("Audio recording is not supported in this browser. Try Chrome on HTTPS.");
-    }
-    setVoiceUi("Connecting microphone…", "Allow microphone access to start");
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
-    });
-    await setupVoiceMeter();
-    startRecorderTurn();
-  }
-
-  function startBrowserVoice() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      throw new Error("Speech-to-text is not configured and this browser has no built-in speech recognition.");
-    }
-    if (!voiceMode || voiceMuted || recognition) return;
-    const recognizer = new SpeechRecognition();
-    const sessionToken = voiceSessionToken;
-    recognition = recognizer;
-    recognizer.lang = navigator.language || "en-US";
-    recognizer.continuous = false;
-    recognizer.interimResults = true;
-    let transcript = "";
-    voiceState = "listening";
-    setVoiceUi("Listening…", "Speak naturally. I’ll respond when you pause.");
-    recognizer.onresult = event => {
-      let interim = "";
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const part = event.results[index][0].transcript;
-        if (event.results[index].isFinal) transcript += `${part} `;
-        else interim += part;
-      }
-      voiceTranscriptText.textContent = (transcript + interim).trim() || "Listening…";
-    };
-    recognizer.onerror = event => {
-      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        finishVoice();
-        showStatus("Microphone permission was denied. Allow microphone access in Chrome site settings.");
-      }
-    };
-    recognizer.onend = async () => {
-      if (recognition !== recognizer) return;
-      recognition = null;
-      if (!voiceMode || sessionToken !== voiceSessionToken || voiceMuted) return;
-      const text = transcript.trim();
-      if (text) {
-        voiceLanguage = inferLanguageFromText(text) || recognizer.lang;
-        voiceTranscriptText.textContent = text;
-        await sendMessage(text, {voice: true, language: voiceLanguage, sessionToken});
-      } else {
-        setVoiceUi("I’m still listening", "Say something whenever you’re ready");
-        window.setTimeout(() => {
-          if (voiceMode && sessionToken === voiceSessionToken && !voiceMuted && !busy) continueVoiceListening();
-        }, 500);
-      }
-    };
-    recognizer.start();
-  }
-
-  async function continueVoiceListening() {
-    if (!voiceMode || voiceMuted || !micStream && speechConfig.sttEnabled) return;
-    if (mediaRecorder?.state === "recording" || recognition) return;
-    try {
-      if (speechConfig.sttEnabled) startRecorderTurn();
-      else startBrowserVoice();
-    } catch (error) {
-      voiceState = "error";
-      setVoiceUi("Microphone unavailable", error instanceof Error ? error.message : "Please try again");
-    }
-  }
-
-  async function startVoice() {
-    if (busy || voiceMode) return;
-    showStatus("");
-    voiceSessionToken += 1;
-    voiceLanguage = null;
-    voiceTranscriptText.textContent = "Your words will appear here";
-    voiceReplyText.textContent = "Your assistant’s reply will appear here";
-    voiceMode = true;
-    voiceMuted = false;
-    voiceState = "listening";
-    setVoiceUi("Starting live voice…", "Connecting securely to your microphone");
-    try {
-      if (speechConfig.sttEnabled) await startRemoteVoice();
-      else startBrowserVoice();
-    } catch (error) {
-      finishVoice();
-      showStatus(error instanceof Error ? error.message : "Could not start voice input.");
-    }
-  }
-
-  function toggleVoice() {
-    if (voiceMode) finishVoice();
-    else void startVoice();
-  }
-
-  function toggleMute() {
-    if (!voiceMode) return;
-    const previousState = voiceState;
-    voiceMuted = !voiceMuted;
-    if (micStream) micStream.getAudioTracks().forEach(track => { track.enabled = !voiceMuted; });
-    if (voiceMuted) {
-      if (mediaRecorder?.state === "recording") {
-        mediaRecorder._orbitDiscard = true;
-        stopVoiceRecording();
-      }
-      if (recognition) {
-        const recognizer = recognition;
-        recognition = null;
-        try { recognizer.onend = null; recognizer.stop(); } catch { /* already stopped */ }
-      }
-      voiceState = "muted";
-      setVoiceUi("Microphone muted", "Your microphone is paused");
-    } else {
-      if (voiceStateBeforeMute === "speaking" || previousState === "speaking") {
-        voiceState = "speaking";
-        setVoiceUi("Speaking…", "Assistant is responding · tap interrupt to speak");
-      } else if (voiceStateBeforeMute === "thinking" || previousState === "thinking") {
-        voiceState = "thinking";
-        setVoiceUi("Thinking…", "Microphone active · listening starts after the reply");
-      } else {
-        voiceState = "listening";
-        setVoiceUi("Listening…", "Microphone active");
-        if (!busy) void continueVoiceListening();
-      }
-    }
-    if (voiceMuted) voiceStateBeforeMute = previousState;
-  }
-
-  function interruptAssistant() {
-    if (!voiceMode || voiceState !== "speaking") return;
-    cancelCurrentSpeech();
-    voiceState = "listening";
-    setVoiceUi("Your turn…", "Go ahead. I’m listening");
-    void continueVoiceListening();
+    send.innerHTML = iconSvg("send");
+    send.setAttribute("aria-label", "Send message");
+    send.title = "Send message";
+    send.disabled = busy || !input.value.trim();
   }
 
   function togglePanel(open) {
     panel.hidden = !open;
     launcher.setAttribute("aria-expanded", String(open));
-    setVoiceUi(voiceStatus.textContent, micStatus.textContent);
     if (open) {
       renderAll();
-      if (!voiceMode) input.focus();
+      input.focus();
       scrollLatest();
     }
   }
@@ -1254,7 +906,6 @@
   compose.addEventListener("submit", event => {
     event.preventDefault();
     if (input.value.trim()) sendMessage(input.value);
-    else toggleVoice();
   });
   input.addEventListener("keydown", event => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -1271,10 +922,6 @@
   close.addEventListener("click", () => togglePanel(false));
   shareConversationButton.addEventListener("click", () => shareText(conversationTranscript(), `${assistantName} conversation`));
   deleteButton.addEventListener("click", () => clearConversation(true));
-  stopVoiceButton.addEventListener("click", () => toggleVoice());
-  muteButton.addEventListener("click", toggleMute);
-  interruptButton.addEventListener("click", interruptAssistant);
-  minimizeVoiceButton.addEventListener("click", () => togglePanel(false));
 
   titleName.textContent = assistantName;
   titleStatus.textContent = "Online assistant";

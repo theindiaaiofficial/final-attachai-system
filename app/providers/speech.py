@@ -4,7 +4,7 @@ import asyncio
 import importlib
 import inspect
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import httpx
@@ -364,6 +364,61 @@ async def _openai_compatible_transcribe(
         raise SpeechProviderError("STT provider returned no transcript")
     detected = body.get("language") or body.get("language_code")
     return text.strip(), str(detected) if detected else None
+
+
+async def stream_synthesize_speech(
+    settings: Any, text: str, language: str | None = None
+) -> AsyncIterator[bytes]:
+    """Yield provider audio chunks where supported; buffer only legacy adapters."""
+    provider = _provider_name(settings.tts_provider)
+    key = _provider_key(settings, "tts", provider)
+    if not key:
+        raise SpeechProviderError(f"{provider} TTS API key is not configured")
+
+    if provider == "deepgram":
+        model = _deepgram_tts_model(settings, language)
+        if not model:
+            raise SpeechProviderError("Deepgram TTS model is not configured")
+        base = str(getattr(settings, "deepgram_api_base", "https://api.deepgram.com"))
+        endpoint = str(getattr(settings, "deepgram_tts_endpoint", "v2/speak"))
+        encoding = str(getattr(settings, "tts_response_format", "mp3")).casefold()
+        params: dict[str, str] = {"model": model}
+        if encoding == "wav":
+            params.update({"encoding": "linear16", "container": "wav"})
+        elif encoding:
+            params["encoding"] = encoding
+        try:
+            async with httpx.AsyncClient(timeout=90.0) as client:
+                async with client.stream(
+                    "POST", _url(base, endpoint),
+                    headers={**_auth_headers(key, scheme="Token"), "Content-Type": "application/json"},
+                    params=params, json={"text": text},
+                ) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_bytes():
+                        if chunk:
+                            yield chunk
+        except httpx.HTTPStatusError as exc:
+            logger.warning("deepgram_tts_stream_http_error status=%s", exc.response.status_code)
+            raise SpeechProviderError(f"Deepgram TTS request failed (HTTP {exc.response.status_code})") from None
+        except httpx.HTTPError as exc:
+            logger.warning("deepgram_tts_stream_network_error type=%s", type(exc).__name__)
+            raise SpeechProviderError("Deepgram TTS streaming connection failed") from None
+        return
+
+    # Legacy SDKs and custom adapters return one complete byte string. The API
+    # remains compatible and can still stream that single payload to the browser.
+    audio, _ = await synthesize_speech(settings, text, language)
+    if audio:
+        yield audio
+
+
+def speech_media_type(settings: Any) -> str:
+    provider = _provider_name(getattr(settings, "tts_provider", ""))
+    if provider == "assemblyai":
+        return "audio/wav"
+    encoding = str(getattr(settings, "tts_response_format", "mp3")).casefold()
+    return {"wav": "audio/wav", "opus": "audio/ogg", "ogg": "audio/ogg", "aac": "audio/aac"}.get(encoding, "audio/mpeg")
 
 
 async def synthesize_speech(
