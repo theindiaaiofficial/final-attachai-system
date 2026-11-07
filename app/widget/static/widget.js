@@ -505,6 +505,61 @@
     scrollLatest();
   }
 
+
+  function applyWidgetDesign(widget, theme) {
+    const colors = {
+      "--orbit-accent": theme.primaryColor || widget.primaryColor,
+      "--orbit-accent-hover": theme.primaryColor || widget.primaryColor,
+      "--orbit-panel": theme.panelColor || widget.panelColor,
+      "--orbit-canvas": theme.surfaceColor || widget.surfaceColor,
+      "--orbit-user": theme.userBubbleColor || widget.userBubbleColor,
+      "--orbit-ink": theme.textColor || widget.textColor,
+    };
+    for (const [name, value] of Object.entries(colors)) {
+      if (typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value)) {
+        root.style.setProperty(name, value);
+      }
+    }
+    const side = widget.position === "left" ? "left" : "right";
+    for (const element of [launcher, panel]) {
+      element.style.left = side === "left" ? "24px" : "auto";
+      element.style.right = side === "right" ? "24px" : "auto";
+    }
+    const width = Number(widget.width);
+    const height = Number(widget.height);
+    const radius = Number(widget.radius);
+    if (Number.isFinite(width)) panel.style.width = `min(${Math.max(320, Math.min(560, width))}px, calc(100vw - 28px))`;
+    if (Number.isFinite(height)) panel.style.height = `min(${Math.max(420, Math.min(820, height))}px, calc(100vh - 112px))`;
+    if (Number.isFinite(radius)) panel.style.borderRadius = `${Math.max(8, Math.min(32, radius))}px`;
+
+    const launcherText = typeof widget.launcherText === "string" && widget.launcherText.trim()
+      ? widget.launcherText.trim().slice(0, 24) : "Chat";
+    launcher.querySelector("span").textContent = launcherText;
+    launcher.setAttribute("aria-label", `Open ${launcherText}`);
+    const launcherSize = widget.launcherSize;
+    launcher.classList.toggle("orbit-launcher-compact", launcherSize === "compact");
+    launcher.classList.toggle("orbit-launcher-large", launcherSize === "large");
+    if (typeof widget.headerSubtitle === "string" && widget.headerSubtitle.trim()) {
+      titleStatus.textContent = widget.headerSubtitle.trim().slice(0, 80);
+    }
+
+    if (typeof widget.logoUrl === "string" && widget.logoUrl.trim()) {
+      try {
+        const url = new URL(widget.logoUrl, base);
+        if (url.protocol === "https:" || url.origin === base) {
+          const image = document.createElement("img");
+          image.src = url.href;
+          image.alt = "";
+          image.referrerPolicy = "no-referrer";
+          image.addEventListener("error", () => { mark.innerHTML = iconSvg("orbit"); }, {once: true});
+          mark.replaceChildren(image);
+        }
+      } catch {
+        // Keep the built-in icon when the configured logo URL is invalid.
+      }
+    }
+  }
+
   async function loadConfig() {
     try {
       const response = await fetch(`${base}/v1/config`, {headers: {"X-API-Key": apiKey}});
@@ -513,6 +568,7 @@
       assistantName = data.assistantName || assistantName;
       welcome = data.welcomeMessage || welcome;
       speechConfig = data.speech || speechConfig;
+      applyWidgetDesign(data.widget || {}, data.theme || {});
       titleName.textContent = assistantName;
       titleStatus.textContent = data.clientName || "Online assistant";
       renderAll();
