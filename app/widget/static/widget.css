@@ -300,3 +300,27 @@ button { -webkit-tap-highlight-color: transparent; }
   }
 }
 
+
+
+/* Tenant-specific visual customization (values validated before being applied). */
+.orbit-launcher {
+  background: var(--orbit-accent) !important;
+  border-color: var(--orbit-accent) !important;
+}
+.orbit-launcher:hover {
+  background: var(--orbit-accent-hover) !important;
+  border-color: var(--orbit-accent-hover) !important;
+}
+.orbit-panel { background: var(--orbit-panel); }
+.orbit-head, .orbit-compose { background: var(--orbit-panel); }
+.orbit-head { color: var(--orbit-ink); }
+.orbit-title strong, .orbit-welcome strong, .orbit-bubble strong,
+.orbit-bubble h3, .orbit-bubble h4, .orbit-bubble h5 { color: var(--orbit-ink); }
+.orbit-messages { background: var(--orbit-canvas); }
+.orbit-welcome { background: var(--orbit-panel); color: var(--orbit-ink); }
+.orbit-welcome p, .orbit-title span { color: var(--orbit-muted); }
+.orbit-bubble { background: var(--orbit-panel); color: var(--orbit-ink); }
+.orbit-message.user .orbit-bubble { background: var(--orbit-user); color: var(--orbit-ink); }
+.orbit-mark img { display:block; width:100%; height:100%; object-fit:contain; border-radius:inherit; }
+.orbit-launcher-compact { min-height:42px !important; padding:0 14px !important; font-size:12px !important; }
+.orbit-launcher-large { min-height:60px !important; padding:0 23px !important; font-size:15px !important; }
