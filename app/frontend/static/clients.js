@@ -60,6 +60,7 @@ export async function openClient(context, id) {
     button("Reset prompt",()=>confirmAction("Reset assistant prompt?","The current prompt will be saved in version history.",async()=>{await api(`${base(id)}/prompts/reset`,{method:"POST"});box.close();context.refresh();toast("Prompt reset.");})),
     button("Delete client",()=>confirmAction("Permanently delete this client?","This removes the client, knowledge objects, linked conversations, leads, and API credentials. This cannot be undone.",async()=>{await api(base(id),{method:"DELETE",timeout:120000});box.close();await context.reloadClients();context.refresh();toast("Client deleted.");},"Delete client"),"danger","trash"),
   );
+  actions.append(button("Widget",()=>{box.close();editWidget(context,client);},"",""));
   content.append(actions);
   content.append(h("h3",{class:"form-section"},"Manage client workspace"),h("div",{class:"toolbar-group"},["conversations","knowledge","leads","analytics"].map(page=>button(page[0].toUpperCase()+page.slice(1),()=>{box.close();context.setTenant(id);context.navigate(page);}))))
 }
@@ -69,6 +70,105 @@ function duplicateClient(context, client) {
     const result=await api(`${base(client.id)}/duplicate`,{method:"POST",body:{name:data.get("name"),slug:data.get("slug")}});
     await context.reloadClients();context.refresh();revealKey(result.api_key,result);
   }});
+}
+
+
+function editWidget(context, client) {
+  const source = client.config || {};
+  const current = source.widget || {};
+  const theme = source.theme || {};
+  const defaults = {
+    primaryColor: theme.primaryColor || current.primaryColor || "#3854a6",
+    panelColor: theme.panelColor || current.panelColor || "#ffffff",
+    surfaceColor: theme.surfaceColor || current.surfaceColor || "#f8fafc",
+    textColor: theme.textColor || current.textColor || "#172033",
+    userBubbleColor: theme.userBubbleColor || current.userBubbleColor || "#edf2ff",
+    position: current.position || "right",
+    launcherText: current.launcherText || "Chat",
+    width: current.width || 420,
+    height: current.height || 690,
+    radius: current.radius || 22,
+    launcherSize: current.launcherSize || "normal",
+    logoUrl: current.logoUrl || "",
+    headerSubtitle: current.headerSubtitle || "",
+  };
+  const grid = h("div", {class:"form-grid"},
+    field("Brand / accent color", "primaryColor", defaults.primaryColor, {type:"color"}),
+    field("Chat panel color", "panelColor", defaults.panelColor, {type:"color"}),
+    field("Message area background", "surfaceColor", defaults.surfaceColor, {type:"color"}),
+    field("Text color", "textColor", defaults.textColor, {type:"color"}),
+    field("Visitor message bubble", "userBubbleColor", defaults.userBubbleColor, {type:"color"}),
+    field("Widget position", "position", defaults.position, {select:[{value:"right",label:"Bottom right"},{value:"left",label:"Bottom left"}]}),
+    field("Launcher button text", "launcherText", defaults.launcherText, {maxlength:24}),
+    field("Launcher button size", "launcherSize", defaults.launcherSize, {select:[{value:"compact",label:"Compact"},{value:"normal",label:"Normal"},{value:"large",label:"Large"}]}),
+    field("Chat window width (px)", "width", String(defaults.width), {type:"number",attrs:{min:"320",max:"560",step:"10"}}),
+    field("Chat window height (px)", "height", String(defaults.height), {type:"number",attrs:{min:"420",max:"820",step:"10"}}),
+    field("Corner roundness (px)", "radius", String(defaults.radius), {type:"number",attrs:{min:"8",max:"32",step:"1"}}),
+    field("Logo image URL (optional)", "logoUrl", defaults.logoUrl, {type:"url",maxlength:1000,wide:true,help:"Use a publicly accessible HTTPS image URL. Leave blank for the default Orbit icon."}),
+    field("Header subtitle (optional)", "headerSubtitle", defaults.headerSubtitle, {maxlength:80,wide:true}),
+  );
+  const preview = h("div", {class:"widget-custom-preview"},
+    h("div", {class:"widget-preview-head"}, h("strong", {}, client.config?.assistantName || "Assistant"), h("span", {}, "Online")),
+    h("div", {class:"widget-preview-body"},
+      h("div", {class:"widget-preview-bubble"}, "Hello! How can I help you today?"),
+      h("div", {class:"widget-preview-user"}, "I have a question")),
+    h("div", {class:"widget-preview-input"}, "Type your message…"));
+  const wrapper = h("div", {},
+    h("p", {class:"text-muted"}, "These design settings apply only to this client. The existing website embed code and API key stay the same."),
+    grid,
+    h("h3", {class:"form-section"}, "Live preview"),
+    preview);
+  dialog("Customize website widget", wrapper, {submitText:"Save widget design", submit:async data => {
+    const colors = {};
+    for (const key of ["primaryColor","panelColor","surfaceColor","textColor","userBubbleColor"]) {
+      const value = String(data.get(key) || "").trim();
+      if (!/^#[0-9a-fA-F]{6}$/.test(value)) throw new Error("Please choose valid colors for all color fields.");
+      colors[key] = value;
+    }
+    const position = data.get("position");
+    const launcherSize = data.get("launcherSize");
+    if (!["left","right"].includes(position)) throw new Error("Choose a valid widget position.");
+    if (!["compact","normal","large"].includes(launcherSize)) throw new Error("Choose a valid launcher size.");
+    const width = Number(data.get("width"));
+    const height = Number(data.get("height"));
+    const radius = Number(data.get("radius"));
+    if (!Number.isInteger(width) || width < 320 || width > 560) throw new Error("Chat window width must be between 320 and 560 px.");
+    if (!Number.isInteger(height) || height < 420 || height > 820) throw new Error("Chat window height must be between 420 and 820 px.");
+    if (!Number.isInteger(radius) || radius < 8 || radius > 32) throw new Error("Corner roundness must be between 8 and 32 px.");
+    const logoUrl = String(data.get("logoUrl") || "").trim();
+    if (logoUrl) {
+      let parsed;
+      try { parsed = new URL(logoUrl); } catch { throw new Error("Enter a valid logo URL."); }
+      if (parsed.protocol !== "https:") throw new Error("Logo URL must use HTTPS.");
+    }
+    const widget = {
+      ...current,
+      ...colors,
+      position,
+      launcherSize,
+      launcherText: String(data.get("launcherText") || "Chat").trim().slice(0,24) || "Chat",
+      width, height, radius, logoUrl,
+      headerSubtitle: String(data.get("headerSubtitle") || "").trim().slice(0,80),
+    };
+    const config = {...source, widget, theme:{...theme, ...colors}};
+    await api(base(client.id), {method:"PATCH", body:{config}});
+    toast("Widget design saved.");
+    context.refresh();
+  }});
+
+  const controls = wrapper.querySelectorAll("input,select");
+  const updatePreview = () => {
+    const values = Object.fromEntries([...controls].map(el => [el.name, el.value]));
+    preview.style.setProperty("--preview-primary", values.primaryColor || defaults.primaryColor);
+    preview.style.setProperty("--preview-panel", values.panelColor || defaults.panelColor);
+    preview.style.setProperty("--preview-surface", values.surfaceColor || defaults.surfaceColor);
+    preview.style.setProperty("--preview-text", values.textColor || defaults.textColor);
+    preview.style.setProperty("--preview-user", values.userBubbleColor || defaults.userBubbleColor);
+    preview.style.setProperty("--preview-radius", `${Math.min(32, Math.max(8, Number(values.radius) || 22))}px`);
+    preview.querySelector(".widget-preview-head strong").textContent = client.config?.assistantName || "Assistant";
+  };
+  controls.forEach(el => el.addEventListener("input", updatePreview));
+  updatePreview();
 }
 
 async function showVersions(context, client) {
