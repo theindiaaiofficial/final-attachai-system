@@ -15,6 +15,120 @@
     return (result >>> 0).toString(36);
   };
   const storageKey = `orbit-widget:v2:${hash(`${base}:${apiKey}`)}`;
+  // Audio is cached per tenant/browser and conversation in IndexedDB. It is
+  // deliberately separate from localStorage because audio blobs can be large.
+  const AUDIO_DB_NAME = `orbit-widget-audio:v1:${hash(`${base}:${apiKey}`)}`;
+  const AUDIO_STORE = "audio";
+  const MAX_CACHED_AUDIO_BYTES = 8 * 1024 * 1024;
+
+  function openAudioDatabase() {
+    if (!window.indexedDB) return Promise.resolve(null);
+    return new Promise((resolve, reject) => {
+      const request = window.indexedDB.open(AUDIO_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(AUDIO_STORE)) {
+          const store = db.createObjectStore(AUDIO_STORE, {keyPath: "key"});
+          store.createIndex("conversationId", "conversationId", {unique: false});
+          store.createIndex("expiresAt", "expiresAt", {unique: false});
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("Audio cache is unavailable."));
+      request.onblocked = () => reject(new Error("Audio cache is blocked by another tab."));
+    });
+  }
+
+  async function getCachedAudio(key, conversationId) {
+    const db = await openAudioDatabase();
+    if (!db) return null;
+    return new Promise((resolve, reject) => {
+      let cachedBlob = null;
+      const transaction = db.transaction(AUDIO_STORE, "readwrite");
+      const store = transaction.objectStore(AUDIO_STORE);
+      const request = store.get(key);
+      request.onsuccess = () => {
+        const row = request.result;
+        if (
+          row && row.conversationId === conversationId &&
+          Number(row.expiresAt) > Date.now() && row.blob instanceof Blob
+        ) {
+          cachedBlob = row.blob;
+        } else if (row) {
+          store.delete(key);
+        }
+      };
+      transaction.oncomplete = () => { db.close(); resolve(cachedBlob); };
+      transaction.onerror = () => { db.close(); reject(transaction.error || new Error("Could not read cached audio.")); };
+      transaction.onabort = () => { db.close(); reject(transaction.error || new Error("Audio cache read was aborted.")); };
+    });
+  }
+
+  async function saveCachedAudio(key, conversationId, blob, validUntil) {
+    if (!blob || !blob.size || blob.size > MAX_CACHED_AUDIO_BYTES) return false;
+    const expiry = Number(validUntil);
+    if (!Number.isFinite(expiry) || expiry <= Date.now()) return false;
+    const db = await openAudioDatabase();
+    if (!db) return false;
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(AUDIO_STORE, "readwrite");
+      transaction.objectStore(AUDIO_STORE).put({
+        key,
+        conversationId,
+        blob,
+        expiresAt: expiry,
+        savedAt: Date.now(),
+      });
+      transaction.oncomplete = () => { db.close(); resolve(true); };
+      transaction.onerror = () => { db.close(); reject(transaction.error || new Error("Could not save cached audio.")); };
+      transaction.onabort = () => { db.close(); reject(transaction.error || new Error("Audio cache write was aborted.")); };
+    });
+  }
+
+  async function deleteAudioForConversation(conversationId) {
+    if (!conversationId) return;
+    const db = await openAudioDatabase();
+    if (!db) return;
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(AUDIO_STORE, "readwrite");
+      const index = transaction.objectStore(AUDIO_STORE).index("conversationId");
+      const request = index.openCursor(window.IDBKeyRange.only(conversationId));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (cursor) {
+          cursor.delete();
+          cursor.continue();
+        }
+      };
+      transaction.oncomplete = () => { db.close(); resolve(); };
+      transaction.onerror = () => { db.close(); reject(transaction.error || new Error("Could not delete conversation audio.")); };
+      transaction.onabort = () => { db.close(); reject(transaction.error || new Error("Audio cleanup was aborted.")); };
+    });
+  }
+
+  async function deleteExpiredAudio() {
+    const db = await openAudioDatabase();
+    if (!db) return;
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(AUDIO_STORE, "readwrite");
+      const index = transaction.objectStore(AUDIO_STORE).index("expiresAt");
+      const request = index.openCursor(window.IDBKeyRange.upperBound(Date.now()));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (cursor) {
+          cursor.delete();
+          cursor.continue();
+        }
+      };
+      transaction.oncomplete = () => { db.close(); resolve(); };
+      transaction.onerror = () => { db.close(); reject(transaction.error || new Error("Could not clean expired audio.")); };
+      transaction.onabort = () => { db.close(); reject(transaction.error || new Error("Expired audio cleanup was aborted.")); };
+    });
+  }
+
+  function audioCacheKey(conversationId, text, language) {
+    return `${conversationId}:${hash(`${language || "auto"}\u0000${text}`)}`;
+  }
   const readStored = () => {
     try {
       const value = JSON.parse(localStorage.getItem(storageKey) || "{}");
@@ -716,6 +830,20 @@
       }
     }
 
+    const conversationId = sessionId;
+    if (!conversationId) {
+      setSpeechState(ui, "error", "Start a conversation before playing audio.");
+      return false;
+    }
+    if (expiresAt && expiresAt <= Date.now()) {
+      await deleteAudioForConversation(conversationId).catch(() => {});
+      clearConversation(false);
+      return false;
+    }
+
+    const language = /[\u0900-\u097F]/u.test(text) ? "hi" : null;
+    const cacheKey = audioCacheKey(conversationId, text, language);
+    const cacheExpiry = expiresAt || (Date.now() + DAY_MS);
     const controller = new AbortController();
     const state = {controller, audio: null, url: null, ui, speakerButton: ui.speakerButton};
     activeSpeech = state;
@@ -724,27 +852,64 @@
     ui.progress.style.width = "0%";
     ui.elapsed.textContent = "0:00";
     ui.total.textContent = "--:--";
-    setSpeechState(ui, "loading", "Preparing audio…");
+    setSpeechState(ui, "loading", "Checking saved audio…");
 
     try {
-      const language = /[\u0900-\u097F]/u.test(text) ? "hi" : null;
-      const response = await fetch(`${base}/v1/tts`, {
-        method: "POST",
-        headers: {"Content-Type": "application/json", "X-API-Key": apiKey},
-        body: JSON.stringify({text, language}),
-        signal: controller.signal,
-      });
-      const errorData = response.ok ? null : await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(errorData?.detail || `TTS request failed (${response.status})`);
-      const blob = await response.blob();
+      let audioBlob = null;
+      let fromCache = false;
+      try {
+        audioBlob = await getCachedAudio(cacheKey, conversationId);
+        fromCache = Boolean(audioBlob);
+      } catch {
+        // IndexedDB is an optimization; speech playback must still work without it.
+      }
       if (activeSpeech !== state || controller.signal.aborted) return false;
-      if (!blob.size) throw new Error("The speech provider returned empty audio.");
+      if (expiresAt && expiresAt <= Date.now()) {
+        await deleteAudioForConversation(conversationId).catch(() => {});
+        clearConversation(false);
+        return false;
+      }
 
-      const mediaType = response.headers.get("content-type") || blob.type || "audio/mpeg";
-      const normalizedMediaType = String(mediaType).split(";", 1)[0].trim();
-      const audioBlob = (!blob.type || blob.type === "application/octet-stream")
-        ? new Blob([blob], {type: normalizedMediaType || "audio/mpeg"})
-        : blob;
+      if (!audioBlob) {
+        setSpeechState(ui, "loading", "Preparing audio…");
+        const response = await fetch(`${base}/v1/tts`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json", "X-API-Key": apiKey},
+          body: JSON.stringify({text, language}),
+          signal: controller.signal,
+        });
+        const errorData = response.ok ? null : await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(errorData?.detail || `TTS request failed (${response.status})`);
+        const responseBlob = await response.blob();
+        if (activeSpeech !== state || controller.signal.aborted) return false;
+        if (!responseBlob.size) throw new Error("The speech provider returned empty audio.");
+
+        const mediaType = response.headers.get("content-type") || responseBlob.type || "audio/mpeg";
+        const normalizedMediaType = String(mediaType).split(";", 1)[0].trim();
+        audioBlob = (!responseBlob.type || responseBlob.type === "application/octet-stream")
+          ? new Blob([responseBlob], {type: normalizedMediaType || "audio/mpeg"})
+          : responseBlob;
+
+        // Store only for the lifetime of this chat. A quota/storage failure
+        // does not block the current audio from playing.
+        try {
+          await saveCachedAudio(cacheKey, conversationId, audioBlob, cacheExpiry);
+        } catch {
+          // Continue with the in-memory audio if IndexedDB is unavailable/full.
+        }
+        if (activeSpeech !== state || controller.signal.aborted) {
+          // A delete may have raced with a pending cache write. Remove any
+          // late write for this conversation so deleted chat audio cannot return.
+          await deleteAudioForConversation(conversationId).catch(() => {});
+          return false;
+        }
+      }
+
+      if (expiresAt && expiresAt <= Date.now()) {
+        await deleteAudioForConversation(conversationId).catch(() => {});
+        clearConversation(false);
+        return false;
+      }
       state.url = URL.createObjectURL(audioBlob);
       state.audio = new Audio();
       state.audio.preload = "metadata";
@@ -752,7 +917,7 @@
       state.audio.addEventListener("loadedmetadata", () => updateSpeechProgress(state));
       state.audio.addEventListener("durationchange", () => updateSpeechProgress(state));
       state.audio.addEventListener("timeupdate", () => updateSpeechProgress(state));
-      state.audio.addEventListener("playing", () => setSpeechState(ui, "playing", "Speaking response"));
+      state.audio.addEventListener("playing", () => setSpeechState(ui, "playing", fromCache ? "Playing saved audio" : "Speaking response"));
       state.audio.addEventListener("pause", () => {
         if (activeSpeech === state && state.audio && !state.audio.ended) {
           setSpeechState(ui, "paused", "Paused");
@@ -762,7 +927,7 @@
         if (activeSpeech !== state) return;
         ui.progress.style.width = "100%";
         ui.elapsed.textContent = formatSpeechTime(state.audio.duration);
-        setSpeechState(ui, "complete", "Finished speaking");
+        setSpeechState(ui, "complete", fromCache ? "Finished speaking (saved audio)" : "Finished speaking");
         cleanupSpeech(state, true);
         ui.player.dataset.state = "complete";
         ui.wave.hidden = false;
@@ -777,7 +942,7 @@
       // OpenAI-compatible endpoints, and registered custom adapters all return
       // the same audio-bytes + media-type contract to this player.
       await state.audio.play();
-      if (activeSpeech === state) setSpeechState(ui, "playing", "Speaking response");
+      if (activeSpeech === state) setSpeechState(ui, "playing", fromCache ? "Playing saved audio" : "Speaking response");
       return true;
     } catch (error) {
       if (error?.name === "AbortError") return false;
@@ -821,7 +986,10 @@
     startedAt = null;
     expiresAt = null;
     localStorage.removeItem(storageKey);
-    if (oldSessionId) deleteRemoteConversation(oldSessionId);
+    if (oldSessionId) {
+      deleteRemoteConversation(oldSessionId);
+      deleteAudioForConversation(oldSessionId).catch(() => {});
+    }
     showStatus("");
     renderAll();
     updateTimer();
@@ -983,7 +1151,11 @@
   titleStatus.textContent = "Online assistant";
   updateComposeButton();
   renderAll();
-  if (expiredSessionId) deleteRemoteConversation(expiredSessionId);
+  if (expiredSessionId) {
+    deleteRemoteConversation(expiredSessionId);
+    deleteAudioForConversation(expiredSessionId).catch(() => {});
+  }
+  deleteExpiredAudio().catch(() => {});
   loadConfig();
   window.setInterval(updateTimer, 1000);
 })();
